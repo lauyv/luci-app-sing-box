@@ -63,6 +63,7 @@ const messages = {
   cache_config_invalid: '无法读取有效配置，不能确定缓存文件',
   cache_workdir_unsafe: '仅支持无符号链接的专用工作目录：/usr/share/sing-box、/var/lib/sing-box、/tmp/sing-box',
   cache_path_unsafe: '缓存路径不安全：必须是工作目录内的普通文件，不能是配置文件、链接或挂载路径',
+  cache_inspect_failed: '无法读取缓存文件或挂载信息，请检查系统工具和文件访问权限',
   cache_changed: '配置或缓存文件已改变，请重新打开确认窗口',
   cache_remove_failed: '清理缓存失败，服务保持停止',
   cache_start_failed: '缓存已清理，但服务未能稳定启动，请检查日志；旧缓存未备份',
