@@ -1,4 +1,6 @@
 #!/bin/sh
+# shellcheck shell=busybox
+# shellcheck disable=SC1091
 . /usr/share/libubox/jshn.sh
 . /usr/share/sing-box-panel/core.sh
 
@@ -34,7 +36,7 @@ case "$2" in
 		json_add_string error_code "$config_error"
 		json_add_string version "$(run_timeout 2 "$BIN" version 2>/dev/null | head -n 1)"
 		json_add_string config "$CONFIG"
-		json_add_string revision "$(config_revision)"
+		json_add_string revision "$([ -z "$config_error" ] && config_revision)"
 		json_add_string pid "$pid"
 		json_add_boolean running "$([ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo 1 || echo 0)"
 		json_add_boolean autostart "$boot"
@@ -56,16 +58,21 @@ case "$2" in
 		json_add_string revision "$revision"
 		json_dump;;
 	logs)
-		settings || { reply 0 "$ERROR"; exit 0; }
+		load_settings
 		mode=system
 		# Upstream uses this UCI option; the OpenWrt feed may always enable stderr.
 		case "$(uci -q get sing-box.main.log_stderr)" in
 			0|off|false|no) log_stderr=0;;
 			*) log_stderr=1;;
 		esac
-		output=$(jsonfilter -i "$CONFIG" -e '@.log.output' 2>/dev/null)
-		disabled=$(jsonfilter -i "$CONFIG" -e '@.log.disabled' 2>/dev/null)
-		[ -z "$output" ] || mode=file
+		output=''
+		disabled=''
+		# System logs remain available when the configuration cannot be read.
+		if [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ]; then
+			output=$(jsonfilter -i "$CONFIG" -e '@.log.output' 2>/dev/null)
+			disabled=$(jsonfilter -i "$CONFIG" -e '@.log.disabled' 2>/dev/null)
+		fi
+		[ -z "$output" ] || mode='file'
 		[ "$disabled" != true ] || mode=disabled
 		# Match the process tag, not arbitrary mentions elsewhere in the log.
 		raw=$(run_timeout 3 logread -e 'sing-box' 2>/dev/null) || {
@@ -80,6 +87,8 @@ case "$2" in
 		json_add_string content "$lines"
 		json_dump;;
 	save|check)
+		# jshn assigns these variables by name; initialize them for static analysis.
+		kind='' content='' revision=''
 		payload=$(head -c 524288)
 		json_load "$payload" 2>/dev/null || { reply 0 request_invalid; exit 0; }
 		json_get_type kind content
@@ -106,13 +115,14 @@ case "$2" in
 		json_add_string revision "$(config_revision)"
 		json_dump;;
 	action)
+		name='' revision=''
 		payload=$(head -c 1024)
 		json_load "$payload" 2>/dev/null || { reply 0 'request_invalid'; exit 0; }
 		json_get_var name name
 		json_get_var revision revision
 		case "$name" in apply|start|stop|restart) ;; *) reply 0 'action_unknown'; exit 0;; esac
 		lock || { reply 0 'operation_busy'; exit 0; }
-		settings || { unlock; reply 0 "$ERROR"; exit 0; }
+		action_settings "$name" || { unlock; reply 0 "$ERROR"; exit 0; }
 		case "$name" in apply)
 			actual=$(config_revision)
 			if [ -z "$revision" ] || [ "$revision" != "$actual" ]; then
@@ -123,6 +133,7 @@ case "$2" in
 		/usr/libexec/sing-box-panel-worker "$name" "$revision" </dev/null >/dev/null 2>&1 &
 		reply 1 'operation_queued';;
 	autostart)
+		kind='' enabled=''
 		payload=$(head -c 1024)
 		json_load "$payload" 2>/dev/null || { reply 0 'request_invalid'; exit 0; }
 		json_get_type kind enabled
@@ -130,11 +141,17 @@ case "$2" in
 		[ "$kind" = boolean ] || { reply 0 'enabled_invalid'; exit 0; }
 		lock || { reply 0 'operation_busy'; exit 0; }
 		trap 'unlock' EXIT
+		init_action=disable
 		if [ "$enabled" = 1 ]; then
-			uci set sing-box.main.enabled=1 && uci commit sing-box && "$INIT" enable > "$RUN/service.log" 2>&1
-		else
-			"$INIT" disable > "$RUN/service.log" 2>&1
+			if ! { uci set sing-box.main.enabled=1 && uci commit sing-box; }; then
+				reply 0 'autostart_failed'; exit 0
+			fi
+			init_action=enable
 		fi
-		if [ "$?" -eq 0 ]; then reply 1 'autostart_updated'; else reply 0 'autostart_failed'; fi;;
+		if "$INIT" "$init_action" > "$RUN/service.log" 2>&1; then
+			reply 1 'autostart_updated'
+		else
+			reply 0 'autostart_failed'
+		fi;;
 	*) reply 0 'method_unknown';;
 esac

@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "New release tag, e.g. v0.1.0"
+        description: 'New release tag, e.g. v0.1.0'
         required: true
         type: string
       prerelease:
-        description: "Mark the release as a prerelease"
+        description: 'Mark the release as a prerelease'
         default: false
         type: boolean
 

@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck shell=busybox
 # Shared by the rpcd plugin and detached worker. No client-controlled paths/commands.
 RUN=/tmp/sing-box-panel
 INIT=/etc/init.d/sing-box
@@ -17,17 +18,30 @@ prepare() {
 	chmod 700 "$RUN" || { DETAILS="无法设置 $RUN 的权限"; return 1; }
 }
 
-settings() {
+load_settings() {
 	CONFIG=$(uci -q get sing-box.main.conffile)
 	WORKDIR=$(uci -q get sing-box.main.workdir)
 	SERVICE_USER=$(uci -q get sing-box.main.user)
 	[ -n "$WORKDIR" ] || WORKDIR=/usr/share/sing-box
 	[ -n "$SERVICE_USER" ] || SERVICE_USER=root
+}
+
+settings() {
+	load_settings
 	case "$CONFIG" in /*) ;; *) ERROR='config_path_invalid'; return 1;; esac
 	case "$WORKDIR" in /*) ;; *) ERROR='workdir_invalid'; return 1;; esac
 	[ ! -L "$CONFIG" ] || { ERROR='config_symlink'; return 1; }
 	[ ! -e "$CONFIG" ] || [ -f "$CONFIG" ] || { ERROR=config_not_regular; return 1; }
 	[ -x "$BIN" ] && [ -x "$INIT" ] || { ERROR='service_missing'; return 1; }
+}
+
+action_settings() {
+	# Stopping a running service must work even if its configuration is broken.
+	if [ "$1" = stop ]; then
+		[ -x "$INIT" ] || { ERROR=service_missing; return 1; }
+	else
+		settings
+	fi
 }
 
 lock() {
@@ -56,11 +70,11 @@ running_pid() {
 
 healthy() {
 	# Require a stable live PID across three observations; a respawn is a failure.
-	local first current n
+	local first current _attempt
 	sleep 1
 	first=$(running_pid)
 	[ -n "$first" ] && kill -0 "$first" 2>/dev/null || return 1
-	for n in 1 2; do
+	for _attempt in 1 2; do
 		sleep 1
 		current=$(running_pid)
 		[ "$current" = "$first" ] && kill -0 "$current" 2>/dev/null || return 1
@@ -74,6 +88,8 @@ run_timeout() (
 	shift
 	command_pid=''
 	watchdog_pid=''
+	# Called by the EXIT trap below, including timeout and signal exits.
+	# shellcheck disable=SC2329
 	cleanup_timeout() {
 		[ -z "$watchdog_pid" ] || kill "$watchdog_pid" 2>/dev/null
 		[ -z "$command_pid" ] || kill -KILL "$command_pid" 2>/dev/null
@@ -131,7 +147,10 @@ stage_config() {
 	if [ -f "$CONFIG" ]; then
 		cp -p "$CONFIG" "$tmp" || { rm -f "$tmp"; return 1; }
 	else
-		chown "$SERVICE_USER" "$tmp" && chmod 600 "$tmp" || { rm -f "$tmp"; return 1; }
+		if ! chown "$SERVICE_USER" "$tmp" || ! chmod 600 "$tmp"; then
+			rm -f "$tmp"
+			return 1
+		fi
 	fi
 	printf '%s' "$1" > "$tmp" || { rm -f "$tmp"; return 1; }
 	printf '%s' "$tmp"
@@ -150,13 +169,13 @@ save_config() {
 	mv -f "$tmp" "$CONFIG" || { rm -f "$tmp"; ERROR=config_save_failed; return 1; }
 }
 
-apply_config() {
+start_service() {
 	check_config "$CONFIG" || return 1
-	if uci set sing-box.main.enabled=1 && uci commit sing-box && service_do restart && healthy; then
+	if uci set sing-box.main.enabled=1 && uci commit sing-box && service_do "$1" && healthy; then
 		return 0
 	fi
 	DETAILS=$(head -c 8192 "$RUN/service.log" 2>/dev/null)
-	ERROR=apply_failed
+	ERROR="$2"
 	return 1
 }
 
@@ -166,7 +185,7 @@ worker() {
 	trap 'worker_exit' EXIT
 	trap 'job error operation_interrupted; exit 1' HUP INT TERM
 	job running operation_running '' "$action"
-	settings || { job error "$ERROR"; return 1; }
+	action_settings "$action" || { job error "$ERROR"; return 1; }
 	case "$action" in apply)
 		[ "$expected" = "$(config_revision)" ] || { job error config_changed; return 1; };;
 	esac
@@ -175,13 +194,10 @@ worker() {
 			check_config "$RUN/validation.json" || { job error "$ERROR" "$DETAILS"; return 1; }
 			job success check_passed "$DETAILS";;
 		apply)
-			apply_config || { job error "$ERROR" "$DETAILS"; return 1; }
+			start_service restart apply_failed || { job error "$ERROR" "$DETAILS"; return 1; }
 			job success 'config_applied';;
 		start|restart)
-			check_config "$CONFIG" || { job error "$ERROR" "$DETAILS"; return 1; }
-			uci set sing-box.main.enabled=1 && uci commit sing-box && service_do "$action" && healthy || {
-				job error 'start_failed'; return 1;
-			}
+			start_service "$action" start_failed || { job error "$ERROR" "$DETAILS"; return 1; }
 			job success 'service_running';;
 		stop)
 			service_do stop || {
@@ -191,7 +207,9 @@ worker() {
 			local pid attempt
 			for attempt in 0 1 2 3 4 5 6 7 8 9 10; do
 				pid=$(running_pid)
-				[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null || break
+				if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+					break
+				fi
 				if [ "$attempt" -eq 10 ]; then
 					job error stop_failed "等待进程退出超时，PID：$pid"; return 1;
 				fi
