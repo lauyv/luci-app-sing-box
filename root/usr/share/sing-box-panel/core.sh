@@ -145,9 +145,44 @@ stop_service() {
 	done
 }
 
+# Read Linux mount identity from stdin, retaining the containing filesystem.
+cache_mount_identity() {
+	awk -v path="$CACHE" -v root="$WORKDIR" '
+		$5 == path || $5 == root || (index($5, root "/") == 1 && index(path, $5 "/") == 1) { unsafe=1 }
+		($5 == "/" || index(path, $5 "/") == 1) && length($5) > longest {
+			longest=length($5); identity=$1 ":" $3 ":" $4 ":" $5
+		}
+		END {
+			if (unsafe) exit 1
+			if (!longest) exit 2
+			print identity
+		}'
+}
+
+# BusyBox ls is available even on firmware built without the stat applet.
+cache_file_identity() {
+	local metadata inode links mount_identity result
+	metadata=$(LC_ALL=C ls -ldni "$CACHE") || { ERROR=cache_inspect_failed; return 1; }
+	metadata=$(printf '%s\n' "$metadata" | awk '
+		NR == 1 && $1 ~ /^[0-9]+$/ && $2 ~ /^-/ && $3 ~ /^[0-9]+$/ { value=$1 ":" $3 }
+		END { if (NR != 1 || value == "") exit 1; print value }
+	') || { ERROR=cache_inspect_failed; return 1; }
+	inode=${metadata%:*}
+	links=${metadata##*:}
+	[ "$links" = 1 ] || { ERROR=cache_path_unsafe; return 1; }
+	mount_identity=$(cache_mount_identity < /proc/self/mountinfo)
+	result=$?
+	case "$result" in
+		0) ;;
+		1) ERROR=cache_path_unsafe; return 1;;
+		*) ERROR=cache_inspect_failed; return 1;;
+	esac
+	CACHE_IDENTITY="$mount_identity:$inode"
+}
+
 # Resolve only the configured cache database, never a client-provided path.
 cache_settings() {
-	local enabled='' kind='' path='' canonical identity
+	local enabled='' kind='' path='' canonical
 	settings || return 1
 	case "$WORKDIR" in
 		/usr/share/sing-box|/var/lib/sing-box|/tmp/sing-box) ;;
@@ -182,15 +217,10 @@ cache_settings() {
 	[ "$canonical" = "$CACHE" ] && [ ! -L "$CACHE" ] || { ERROR=cache_path_unsafe; return 1; }
 	[ "$CACHE" != "$(readlink -f "$CONFIG")" ] || { ERROR=cache_path_unsafe; return 1; }
 	[ -e "$CACHE" ] || { ERROR=cache_missing; return 1; }
-	[ -f "$CACHE" ] && [ "$(stat -c %h "$CACHE")" = 1 ] || { ERROR=cache_path_unsafe; return 1; }
-	# Reject a mount at the file, workdir, or any intermediate directory.
-	awk -v path="$CACHE" -v root="$WORKDIR" '
-		$5 == path || $5 == root || (index($5, root "/") == 1 && index(path, $5 "/") == 1) { found=1 }
-		END { exit found ? 1 : 0 }
-	' /proc/self/mountinfo || { ERROR=cache_path_unsafe; return 1; }
-	identity=$(stat -c '%d:%i' "$CACHE") || { ERROR=cache_path_unsafe; return 1; }
+	[ -f "$CACHE" ] || { ERROR=cache_path_unsafe; return 1; }
+	cache_file_identity || return 1
 	# Do not hash the live database: normal writes must not invalidate confirmation.
-	CACHE_TOKEN=$(printf '%s\n' "$CACHE" "$identity" "$SERVICE_USER" "$(config_revision)" | sha256sum | cut -d ' ' -f 1)
+	CACHE_TOKEN=$(printf '%s\n' "$CACHE" "$CACHE_IDENTITY" "$SERVICE_USER" "$(config_revision)" | sha256sum | cut -d ' ' -f 1)
 }
 
 reset_cache() {
