@@ -14,7 +14,7 @@ reply() {
 
 case "$1" in
 	list)
-		printf '%s\n' '{"status":{},"read":{},"logs":{},"check":{"content":"String"},"save":{"content":"String","revision":"String"},"action":{"name":"String","revision":"String"},"autostart":{"enabled":true}}'
+		printf '%s\n' '{"status":{},"read":{},"logs":{},"cache":{},"check":{"content":"String"},"save":{"content":"String","revision":"String"},"action":{"name":"String","revision":"String"},"autostart":{"enabled":true}}'
 		exit 0;;
 	call) ;;
 	*) exit 1;;
@@ -22,6 +22,20 @@ esac
 
 prepare || { reply 0 'directories_failed' "$DETAILS"; exit 0; }
 case "$2" in
+	cache)
+		CACHE=''
+		cache_ok=1
+		ERROR=''
+		cache_settings || cache_ok=0
+		pid=$(running_pid)
+		json_init
+		json_add_boolean ok "$cache_ok"
+		json_add_string code "$ERROR"
+		json_add_string path "$CACHE"
+		json_add_string workdir "$WORKDIR"
+		json_add_string token "${CACHE_TOKEN:-}"
+		json_add_boolean running "$([ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo 1 || echo 0)"
+		json_dump;;
 	status)
 		config_error=''
 		settings || config_error="$ERROR"
@@ -120,13 +134,18 @@ case "$2" in
 		json_load "$payload" 2>/dev/null || { reply 0 'request_invalid'; exit 0; }
 		json_get_var name name
 		json_get_var revision revision
-		case "$name" in apply|start|stop|restart) ;; *) reply 0 'action_unknown'; exit 0;; esac
+		case "$name" in apply|start|stop|restart|cache_reset|cache_reset_start) ;; *) reply 0 'action_unknown'; exit 0;; esac
 		lock || { reply 0 'operation_busy'; exit 0; }
 		action_settings "$name" || { unlock; reply 0 "$ERROR"; exit 0; }
 		case "$name" in apply)
 			actual=$(config_revision)
 			if [ -z "$revision" ] || [ "$revision" != "$actual" ]; then
 				unlock; reply 0 config_changed; exit 0
+			fi;;
+		cache_reset|cache_reset_start)
+			cache_settings || { unlock; reply 0 "$ERROR"; exit 0; }
+			if [ -z "$revision" ] || [ "$revision" != "$CACHE_TOKEN" ]; then
+				unlock; reply 0 cache_changed; exit 0
 			fi;;
 		esac
 		job queued operation_queued

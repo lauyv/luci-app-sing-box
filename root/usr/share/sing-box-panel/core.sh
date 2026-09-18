@@ -11,7 +11,6 @@ prepare() {
 	[ "$(id -u)" = 0 ] || { DETAILS='面板后端必须以 root 身份运行'; return 1; }
 	[ ! -L "$RUN" ] || { DETAILS="$RUN 是符号链接"; return 1; }
 	mkdir -p "$RUN" || { DETAILS="无法创建 $RUN"; return 1; }
-	# BusyBox ash supports -O without requiring a separate stat applet.
 	[ -d "$RUN" ] && [ -O "$RUN" ] || {
 		DETAILS="$RUN 必须是 root 所有的目录"; return 1;
 	}
@@ -124,6 +123,99 @@ service_do() {
 	run_timeout 12 "$INIT" "$1" > "$RUN/service.log" 2>&1
 }
 
+stop_service() {
+	local state pids pid attempt alive running
+	service_do stop || { ERROR=stop_failed; DETAILS=$(head -c 8192 "$RUN/service.log"); return 1; }
+	for attempt in 0 1 2 3 4 5 6 7 8 9 10; do
+		# Fail closed if procd cannot confirm the state; check every instance.
+		state=$(ubus call service list '{"name":"sing-box"}') || { ERROR=service_status_failed; return 1; }
+		json_load "$state" || { ERROR=service_status_failed; return 1; }
+		command -v jsonfilter >/dev/null || { ERROR=service_status_failed; return 1; }
+		pids=$(jsonfilter -s "$state" -e '@["sing-box"].instances.*.pid')
+		running=$(jsonfilter -s "$state" -e '@["sing-box"].instances.*.running')
+		case "$pids:$running" in :*true*) ERROR=service_status_failed; return 1;; esac
+		alive=0
+		for pid in $pids; do
+			case "$pid" in ''|*[!0-9]*) ERROR=service_status_failed; return 1;; esac
+			if kill -0 "$pid" 2>/dev/null; then alive=1; fi
+		done
+		[ "$alive" = 0 ] && return 0
+		[ "$attempt" -lt 10 ] || { ERROR=stop_failed; DETAILS='等待服务进程退出超时'; return 1; }
+		sleep 1
+	done
+}
+
+# Resolve only the configured cache database, never a client-provided path.
+cache_settings() {
+	local enabled='' kind='' path='' canonical identity
+	settings || return 1
+	case "$WORKDIR" in
+		/usr/share/sing-box|/var/lib/sing-box|/tmp/sing-box) ;;
+		*) ERROR=cache_workdir_unsafe; return 1;;
+	esac
+	[ -d "$WORKDIR" ] && [ "$(readlink -f "$WORKDIR")" = "$WORKDIR" ] || {
+		ERROR=cache_workdir_unsafe; return 1;
+	}
+	[ -f "$CONFIG" ] && [ "$(wc -c < "$CONFIG")" -le "$MAX_SIZE" ] || {
+		ERROR=cache_config_invalid; return 1;
+	}
+	json_load "$(cat "$CONFIG")" || { ERROR=cache_config_invalid; return 1; }
+	if ! { json_select experimental && json_select cache_file; }; then
+		ERROR=cache_disabled; return 1
+	fi
+	json_get_type kind enabled
+	json_get_var enabled enabled
+	[ "$kind" = boolean ] && [ "$enabled" = 1 ] || { ERROR=cache_disabled; return 1; }
+	kind=''
+	json_get_type kind path
+	case "$kind" in
+		string) json_get_var path path;;
+		'') ;;
+		*) ERROR=cache_path_unsafe; return 1;;
+	esac
+	[ -n "$path" ] || path=cache.db
+	case "$path" in /*) CACHE="$path";; *) CACHE="$WORKDIR/$path";; esac
+	# A restricted character set also makes mountinfo path comparison unambiguous.
+	case "$CACHE" in *[!a-zA-Z0-9_./-]*) ERROR=cache_path_unsafe; return 1;; esac
+	case "$CACHE" in "$WORKDIR"/*) ;; *) ERROR=cache_path_unsafe; return 1;; esac
+	canonical=$(readlink -f "$CACHE") || { ERROR=cache_path_unsafe; return 1; }
+	[ "$canonical" = "$CACHE" ] && [ ! -L "$CACHE" ] || { ERROR=cache_path_unsafe; return 1; }
+	[ "$CACHE" != "$(readlink -f "$CONFIG")" ] || { ERROR=cache_path_unsafe; return 1; }
+	[ -e "$CACHE" ] || { ERROR=cache_missing; return 1; }
+	[ -f "$CACHE" ] && [ "$(stat -c %h "$CACHE")" = 1 ] || { ERROR=cache_path_unsafe; return 1; }
+	# Reject a mount at the file, workdir, or any intermediate directory.
+	awk -v path="$CACHE" -v root="$WORKDIR" '
+		$5 == path || $5 == root || (index($5, root "/") == 1 && index(path, $5 "/") == 1) { found=1 }
+		END { exit found ? 1 : 0 }
+	' /proc/self/mountinfo || { ERROR=cache_path_unsafe; return 1; }
+	identity=$(stat -c '%d:%i' "$CACHE") || { ERROR=cache_path_unsafe; return 1; }
+	# Do not hash the live database: normal writes must not invalidate confirmation.
+	CACHE_TOKEN=$(printf '%s\n' "$CACHE" "$identity" "$SERVICE_USER" "$(config_revision)" | sha256sum | cut -d ' ' -f 1)
+}
+
+reset_cache() {
+	local expected="$1" start="$2" failure
+	DETAILS=''
+	cache_settings || return 1
+	[ "$expected" = "$CACHE_TOKEN" ] || { ERROR=cache_changed; return 1; }
+	stop_service || return 1
+	# Re-read configuration and revalidate paths after waiting for the service.
+	cache_settings || return 1
+	[ "$expected" = "$CACHE_TOKEN" ] || { ERROR=cache_changed; return 1; }
+	job running operation_running "缓存文件：$CACHE" cache_reset
+	rm -f "$CACHE" || { ERROR=cache_remove_failed; return 1; }
+	if [ "$start" = 1 ]; then
+		if ! start_service start cache_start_failed; then
+			failure="$DETAILS"
+			if ! stop_service; then failure="$failure；停止服务失败，请检查运行状态"; fi
+			ERROR=cache_start_failed
+			DETAILS="$failure"
+			return 1
+		fi
+	fi
+	DETAILS="缓存文件：$CACHE"
+}
+
 check_config() {
 	ERROR_ARG=''
 	[ -f "$1" ] || { ERROR='config_missing'; return 1; }
@@ -200,22 +292,13 @@ worker() {
 			start_service "$action" start_failed || { job error "$ERROR" "$DETAILS"; return 1; }
 			job success 'service_running';;
 		stop)
-			service_do stop || {
-				job error stop_failed "$(head -c 8192 "$RUN/service.log" 2>/dev/null)"; return 1;
-			}
-			# procd may return before the process has exited or its PID is removed.
-			local pid attempt
-			for attempt in 0 1 2 3 4 5 6 7 8 9 10; do
-				pid=$(running_pid)
-				if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
-					break
-				fi
-				if [ "$attempt" -eq 10 ]; then
-					job error stop_failed "等待进程退出超时，PID：$pid"; return 1;
-				fi
-				sleep 1
-			done
+			stop_service || { job error "$ERROR" "$DETAILS"; return 1; }
 			job success 'service_stopped';;
+		cache_reset|cache_reset_start)
+			reset_cache "$expected" "$([ "$action" = cache_reset_start ] && echo 1 || echo 0)" || {
+				job error "$ERROR" "$DETAILS"; return 1;
+			}
+			job success "$action" "$DETAILS";;
 		*) job error 'action_unknown'; return 1;;
 	esac
 }

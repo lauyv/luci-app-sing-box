@@ -1,25 +1,34 @@
 /* Only content sizing and wrapping; LuCI themes own colors, tabs and controls. */
+#sing-box-cache-start {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+#sing-box-panel .cbi-value:has(#sing-box-autostart) {
+  display: flex;
+  align-items: center;
+}
 #sing-box-panel textarea {
-	box-sizing: border-box;
-	width: 100%;
-	max-width: 100%;
-	font-family: monospace;
-	resize: vertical;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  font-family: monospace;
+  resize: vertical;
 }
 #sing-box-panel .sing-box-actions {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5em;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
 }
 #sing-box-panel .cbi-page-actions {
-	justify-content: flex-end;
+  justify-content: flex-end;
 }
 #sing-box-panel .cbi-value-field {
-	overflow-wrap: anywhere;
+  overflow-wrap: anywhere;
 }
 .sing-box-output {
-	max-height: 20em;
-	overflow: auto;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
+  max-height: 20em;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
