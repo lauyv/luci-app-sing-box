@@ -1,0 +1,140 @@
+#!/bin/sh
+. /usr/share/libubox/jshn.sh
+. /usr/share/sing-box-panel/core.sh
+
+reply() {
+	json_init
+	json_add_boolean ok "$1"
+	json_add_string code "$2"
+	json_add_string details "${3:-}"
+	json_dump
+}
+
+case "$1" in
+	list)
+		printf '%s\n' '{"status":{},"read":{},"logs":{},"check":{"content":"String"},"save":{"content":"String","revision":"String"},"action":{"name":"String","revision":"String"},"autostart":{"enabled":true}}'
+		exit 0;;
+	call) ;;
+	*) exit 1;;
+esac
+
+prepare || { reply 0 'directories_failed' "$DETAILS"; exit 0; }
+case "$2" in
+	status)
+		config_error=''
+		settings || config_error="$ERROR"
+		pid=$(running_pid)
+		boot=0
+		"$INIT" enabled >/dev/null 2>&1 && [ "$(uci -q get sing-box.main.enabled)" = 1 ] && boot=1
+		busy=0
+		[ -d "$RUN/lock" ] && busy=1
+		job_data=$(cat "$RUN/job.json" 2>/dev/null)
+		json_init
+		json_add_boolean ok 1
+		json_add_string error_code "$config_error"
+		json_add_string version "$(run_timeout 2 "$BIN" version 2>/dev/null | head -n 1)"
+		json_add_string config "$CONFIG"
+		json_add_string revision "$(config_revision)"
+		json_add_string pid "$pid"
+		json_add_boolean running "$([ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo 1 || echo 0)"
+		json_add_boolean autostart "$boot"
+		json_add_boolean busy "$busy"
+		json_add_string job "$job_data"
+		json_dump;;
+	read)
+		settings || { reply 0 "$ERROR"; exit 0; }
+		if [ -f "$CONFIG" ] && [ "$(wc -c < "$CONFIG")" -gt "$MAX_SIZE" ]; then
+			reply 0 config_too_large; exit 0
+		fi
+		revision=$(config_revision)
+		content=$(cat "$CONFIG" 2>/dev/null; printf '.')
+		content=${content%.}
+		[ "$revision" = "$(config_revision)" ] || { reply 0 config_changed; exit 0; }
+		json_init
+		json_add_boolean ok 1
+		json_add_string content "$content"
+		json_add_string revision "$revision"
+		json_dump;;
+	logs)
+		settings || { reply 0 "$ERROR"; exit 0; }
+		mode=system
+		# Upstream uses this UCI option; the OpenWrt feed may always enable stderr.
+		case "$(uci -q get sing-box.main.log_stderr)" in
+			0|off|false|no) log_stderr=0;;
+			*) log_stderr=1;;
+		esac
+		output=$(jsonfilter -i "$CONFIG" -e '@.log.output' 2>/dev/null)
+		disabled=$(jsonfilter -i "$CONFIG" -e '@.log.disabled' 2>/dev/null)
+		[ -z "$output" ] || mode=file
+		[ "$disabled" != true ] || mode=disabled
+		# Match the process tag, not arbitrary mentions elsewhere in the log.
+		raw=$(run_timeout 3 logread -e 'sing-box' 2>/dev/null) || {
+			reply 0 'logs_failed'; exit 0;
+		}
+		lines=$(printf '%s\n' "$raw" | grep -E 'sing-box(\[[0-9]+\])?:' | tail -n 200 | tail -c 24576)
+		json_init
+		json_add_boolean ok 1
+		json_add_string mode "$mode"
+		json_add_boolean log_stderr "$log_stderr"
+		json_add_string output "$output"
+		json_add_string content "$lines"
+		json_dump;;
+	save|check)
+		payload=$(head -c 524288)
+		json_load "$payload" 2>/dev/null || { reply 0 request_invalid; exit 0; }
+		json_get_type kind content
+		[ "$kind" = string ] || { reply 0 content_invalid; exit 0; }
+		json_get_var content content
+		json_get_var revision revision
+		[ "$(printf '%s' "$content" | wc -c)" -le "$MAX_SIZE" ] || { reply 0 config_too_large; exit 0; }
+		lock || { reply 0 operation_busy; exit 0; }
+		trap 'unlock' EXIT
+		settings || { reply 0 "$ERROR"; exit 0; }
+		if [ "$2" = check ]; then
+			trap 'rm -f "$RUN/validation.json"; unlock' EXIT
+			printf '%s' "$content" > "$RUN/validation.json" || { reply 0 check_prepare_failed; exit 0; }
+			job queued operation_queued
+			/usr/libexec/sing-box-panel-worker validate </dev/null >/dev/null 2>&1 &
+			trap - EXIT
+			reply 1 operation_queued
+			exit 0
+		fi
+		save_config "$content" "$revision" || { reply 0 "$ERROR"; exit 0; }
+		json_init
+		json_add_boolean ok 1
+		json_add_string code config_saved
+		json_add_string revision "$(config_revision)"
+		json_dump;;
+	action)
+		payload=$(head -c 1024)
+		json_load "$payload" 2>/dev/null || { reply 0 'request_invalid'; exit 0; }
+		json_get_var name name
+		json_get_var revision revision
+		case "$name" in apply|start|stop|restart) ;; *) reply 0 'action_unknown'; exit 0;; esac
+		lock || { reply 0 'operation_busy'; exit 0; }
+		settings || { unlock; reply 0 "$ERROR"; exit 0; }
+		case "$name" in apply)
+			actual=$(config_revision)
+			if [ -z "$revision" ] || [ "$revision" != "$actual" ]; then
+				unlock; reply 0 config_changed; exit 0
+			fi;;
+		esac
+		job queued operation_queued
+		/usr/libexec/sing-box-panel-worker "$name" "$revision" </dev/null >/dev/null 2>&1 &
+		reply 1 'operation_queued';;
+	autostart)
+		payload=$(head -c 1024)
+		json_load "$payload" 2>/dev/null || { reply 0 'request_invalid'; exit 0; }
+		json_get_type kind enabled
+		json_get_var enabled enabled
+		[ "$kind" = boolean ] || { reply 0 'enabled_invalid'; exit 0; }
+		lock || { reply 0 'operation_busy'; exit 0; }
+		trap 'unlock' EXIT
+		if [ "$enabled" = 1 ]; then
+			uci set sing-box.main.enabled=1 && uci commit sing-box && "$INIT" enable > "$RUN/service.log" 2>&1
+		else
+			"$INIT" disable > "$RUN/service.log" 2>&1
+		fi
+		if [ "$?" -eq 0 ]; then reply 1 'autostart_updated'; else reply 0 'autostart_failed'; fi;;
+	*) reply 0 'method_unknown';;
+esac

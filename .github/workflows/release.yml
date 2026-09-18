@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "New release tag, e.g. v0.1.0"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the release as a prerelease"
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Restore packaging tools
+        id: tools
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/packaging-tools
+          key: apk-tools-${{ runner.os }}-26.04-${{ runner.arch }}-${{ hashFiles('.github/scripts/prepare-tools.sh') }}
+
+      - name: Install packaging dependencies
+        env:
+          TOOLS_CACHED: ${{ steps.tools.outputs.cache-hit }}
+        run: |
+          packages=(fakeroot)
+          if [[ "$TOOLS_CACHED" != true ]]; then
+            packages+=(build-essential meson ninja-build pkg-config libssl-dev zlib1g-dev)
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends "${packages[@]}"
+
+      - name: Package APK
+        env:
+          TOOLS_DIR: ${{ runner.temp }}/packaging-tools
+        run: |
+          bash .github/scripts/prepare-tools.sh
+          bash .github/scripts/build-apk.sh
+
+      - name: Publish APK packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          BUILD_SHA: ${{ github.sha }}
+        run: |
+          flags=()
+          if [[ "$PRERELEASE" == true ]]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" dist/luci-app-sing-box-*.apk \
+            --target "$BUILD_SHA" \
+            --title "sing-box LuCI $RELEASE_TAG (OpenWrt APK)" \
+            --notes "OpenWrt · APK v3 · noarch · $BUILD_SHA
+
+          Requires APK v3 support and compatible LuCI, rpcd and sing-box service interfaces.
+
+          Install:
+          apk add --allow-untrusted ./luci-app-sing-box-*.apk
+          /etc/init.d/rpcd restart" "${flags[@]}"
