@@ -1,11 +1,11 @@
 {
-  "luci-app-sing-box": {
-    "description": "管理 sing-box 配置与服务",
-    "read": {
-      "ubus": { "luci.sing-box": [ "status", "read", "logs" ] }
-    },
-    "write": {
-      "ubus": { "luci.sing-box": [ "check", "save", "action", "autostart" ] }
-    }
-  }
+	"luci-app-sing-box": {
+		"description": "管理 sing-box 配置与服务",
+		"read": {
+			"ubus": { "luci.sing-box": ["status", "read", "logs"] }
+		},
+		"write": {
+			"ubus": { "luci.sing-box": ["check", "save", "action", "autostart"] }
+		}
+	}
 }

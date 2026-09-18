@@ -1,88 +1,25 @@
-/* 颜色、标题、卡片和按钮由 LuCI 主题提供，这里只补充面板布局。 */
-.sb-panel { width: 100%; min-width: 0; }
-.sb-panel .sb-tabs {
-  display: flex; align-items: flex-end; gap: .4rem; min-height: 0;
-  margin: .5rem 0 0; padding: 0 1rem; background: transparent;
-  border: 0; box-shadow: none;
-  margin-bottom: 0 !important;
+/* Only content sizing and wrapping; LuCI themes own colors, tabs and controls. */
+#sing-box-panel textarea {
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 100%;
+	font-family: monospace;
+	resize: vertical;
 }
-/* 标签只由链接提供内边距，避免与主题的 li 内边距叠加。 */
-.sb-panel .sb-tabs > li {
-  flex: 0 0 auto; margin: 0; padding: 0; min-height: 0; line-height: normal;
+#sing-box-panel .sing-box-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5em;
 }
-.sb-panel .sb-tabs > li > a {
-  display: block; margin: 0; padding: .5rem .75rem;
-  font-size: .9rem; line-height: 1.4; cursor: pointer;
+#sing-box-panel .cbi-page-actions {
+	justify-content: flex-end;
 }
-.sb-panel .sb-section,
-.sb-panel .sb-config-page,
-.sb-panel .sb-logs-page {
-  min-width: 0; margin-top: 0 !important;
+#sing-box-panel .cbi-value-field {
+	overflow-wrap: anywhere;
 }
-.sb-panel .sb-form { padding-top: 1.5rem; padding-bottom: .5rem; }
-.sb-panel .sb-form .cbi-value-field { overflow-wrap: anywhere; }
-.sb-panel .sb-form code { white-space: normal; overflow-wrap: anywhere; }
-.sb-panel .sb-status { font-weight: 500; }
-.sb-panel .sb-status::before {
-  content: ""; display: inline-block; width: .5em; height: .5em;
-  margin-right: .6em; border-radius: 50%; background: #8b95a5;
-}
-.sb-panel .sb-status[data-running="true"]::before { background: #2dce89; }
-.sb-panel .sb-toolbar {
-  display: flex; align-items: center; gap: .65rem; flex-wrap: wrap;
-}
-.sb-panel .sb-toolbar .cbi-button { margin: 0; }
-.sb-panel .sb-check { display: inline-flex; align-items: center; cursor: pointer; }
-.sb-panel .sb-check input { margin: 0; }
-.sb-panel .sb-hint { font-size: .9em; opacity: .75; line-height: 1.7; }
-.sb-panel .sb-editor,
-.sb-panel .sb-log {
-  box-sizing: border-box; margin: 0; padding: 1rem; max-height: none;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 13px;
-}
-.sb-panel .sb-editor {
-  display: block; width: 100%; min-height: 240px;
-  line-height: 1.75; tab-size: 2; resize: none;
-}
-.sb-panel .sb-log {
-  min-height: 80px; border: 0; background: transparent; overscroll-behavior: contain;
-  overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
-  line-height: 1.8; color: inherit;
-}
-.sb-panel .sb-updated { display: block; text-align: right; margin: .5rem 0; }
-.sb-panel .sb-message {
-  display: flex; align-items: flex-start; gap: 1rem;
-  margin: 0 0 1rem; padding: .75rem 1rem;
-  border-left: 3px solid currentColor; font-size: .95em;
-}
-.sb-panel .sb-message[hidden],
-.sb-panel .sb-problem:empty,
-.sb-panel #sb-logs > .sb-hint:empty { display: none; }
-.sb-panel .sb-message[data-state="success"] { border-left-color: #2dce89; }
-.sb-panel .sb-message[data-state="error"] { border-left-color: #f5365c; }
-.sb-panel .sb-message-text {
-  flex: 1; min-width: 0; max-height: 220px; overflow: auto;
-  white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6;
-}
-.sb-panel .sb-dismiss {
-  appearance: none; flex: 0 0 auto; background: transparent; border: 0;
-  box-shadow: none; color: inherit; padding: 0 .25rem;
-  font-size: 1.4rem; line-height: 1.2; cursor: pointer;
-}
-.sb-panel .sb-problem { border-left: 3px solid #f5365c; margin: 0 0 1rem; padding: .75rem 1rem; }
-
-.sb-panel .sb-config-content { margin-bottom: 0; padding-bottom: 0; }
-.sb-panel .sb-config-content > h3 { margin-bottom: .25rem; padding-bottom: .5rem; }
-.sb-panel .sb-config-content > .sb-config-description { margin: 0; padding: .25rem 1rem; line-height: 1.5; }
-.sb-panel .sb-config-content > .sb-dirty { margin: 0; padding: .25rem 1rem .5rem; line-height: 1.5; }
-.sb-panel .sb-config-actions { justify-content: flex-end; margin: .75rem 0 0; padding: 0; }
-
-.sb-panel #sb-overview .sb-toolbar { justify-content: flex-start; margin: 1rem 0 0; }
-.sb-panel .sb-log-card { margin-bottom: 0; padding: 0; overflow: hidden; }
-
-@media (max-width: 600px) {
-  .sb-panel .sb-tabs { overflow-x: auto; }
-  .sb-panel .sb-form { padding-top: .5rem; }
-  .sb-panel .sb-editor { padding: .75rem; }
+.sing-box-output {
+	max-height: 20em;
+	overflow: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }

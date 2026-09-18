@@ -1,4 +1,6 @@
 #!/bin/sh
+# shellcheck shell=busybox
+# shellcheck disable=SC1091
 . /usr/share/libubox/jshn.sh
 . /usr/share/sing-box-panel/core.sh
 prepare || exit 1
