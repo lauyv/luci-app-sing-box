@@ -18,6 +18,8 @@
 #sing-box-panel .sing-box-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
   gap: 0.5em;
 }
 #sing-box-panel .cbi-page-actions {

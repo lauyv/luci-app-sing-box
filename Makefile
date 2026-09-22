@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=sing-box 配置与服务管理面板
-LUCI_DEPENDS:=+luci-base +sing-box +rpcd +jshn +jsonfilter
+LUCI_DEPENDS:=+luci-base +sing-box +rpcd +jshn +jsonfilter +uclient-fetch
 LUCI_PKGARCH:=all
 
 PKG_LICENSE:=MIT

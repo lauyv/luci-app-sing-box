@@ -14,7 +14,7 @@ reply() {
 
 case "$1" in
 	list)
-		printf '%s\n' '{"status":{},"read":{},"logs":{},"cache":{},"check":{"content":"String"},"save":{"content":"String","revision":"String"},"action":{"name":"String","revision":"String"},"autostart":{"enabled":true}}'
+		printf '%s\n' '{"status":{},"read":{},"logs":{},"cache":{},"fetch":{"url":"String"},"check":{"content":"String"},"save":{"content":"String","revision":"String"},"action":{"name":"String","revision":"String"},"autostart":{"enabled":true}}'
 		exit 0;;
 	call) ;;
 	*) exit 1;;
@@ -99,6 +99,29 @@ case "$2" in
 		json_add_boolean log_stderr "$log_stderr"
 		json_add_string output "$output"
 		json_add_string content "$lines"
+		json_dump;;
+	fetch)
+		kind='' url='' tmp='' content=''
+		payload=$(head -c 8192)
+		json_load "$payload" 2>/dev/null || { reply 0 request_invalid; exit 0; }
+		json_get_type kind url
+		[ "$kind" = string ] || { reply 0 url_invalid; exit 0; }
+		json_get_var url url
+		[ "${#url}" -le 2048 ] || { reply 0 url_invalid; exit 0; }
+		case "$url" in http://*|https://*) ;; *) reply 0 url_invalid; exit 0;; esac
+		printf '%s' "$url" | grep -q '[[:cntrl:]]' && { reply 0 url_invalid; exit 0; }
+		tmp=$(mktemp "$RUN/import.XXXXXX") || { reply 0 config_fetch_failed; exit 0; }
+		trap 'rm -f "$tmp"' EXIT
+		if ! run_timeout 20 uclient-fetch -q -O "$tmp" "$url"; then
+			reply 0 config_fetch_failed; exit 0
+		fi
+		[ -f "$tmp" ] || { reply 0 config_fetch_failed; exit 0; }
+		[ "$(wc -c < "$tmp")" -le "$MAX_SIZE" ] || { reply 0 config_too_large; exit 0; }
+		content=$(cat "$tmp"; printf '.')
+		content=${content%.}
+		json_init
+		json_add_boolean ok 1
+		json_add_string content "$content"
 		json_dump;;
 	save|check)
 		# jshn assigns these variables by name; initialize them for static analysis.

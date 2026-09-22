@@ -23,9 +23,17 @@ fi
 
 # Write commit text directly to a file so multiline messages and shell syntax stay literal.
 git log --reverse --format='%B' "$COMMIT_RANGE" -- > "$NOTES_FILE"
-cat >> "$NOTES_FILE" <<'EOF'
+shopt -s nullglob
+APK_FILES=(dist/luci-app-sing-box-*.apk)
+[[ ${#APK_FILES[@]} -eq 1 ]] || {
+  printf 'Expected exactly one APK in dist, found %d\n' "${#APK_FILES[@]}" >&2
+  exit 1
+}
+APK_NAME=$(basename -- "${APK_FILES[0]}")
+
+cat >> "$NOTES_FILE" <<EOF
 
 Install:
-apk add --allow-untrusted ./luci-app-sing-box-*.apk
+apk add --allow-untrusted ./$APK_NAME
 /etc/init.d/rpcd restart
 EOF

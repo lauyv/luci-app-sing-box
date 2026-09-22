@@ -18,6 +18,7 @@ const api = {
   read: method('read'),
   logs: method('logs'),
   cache: method('cache'),
+  fetchConfig: method('fetch', ['url']),
   save: method('save', ['content', 'revision']),
   check: method('check', ['content']),
   action: method('action', ['name', 'revision']),
@@ -34,6 +35,8 @@ const messages = {
   service_missing: '缺少 sing-box 可执行文件或启动脚本',
   config_missing: '没有已保存的配置',
   config_too_large: '配置大小超过 64 KiB',
+  url_invalid: '请输入有效的 HTTP 或 HTTPS 配置地址',
+  config_fetch_failed: '在线配置拉取失败，请检查地址和网络连接',
   check_failed: '配置校验失败（退出码 %s）',
   check_prepare_failed: '无法准备临时校验文件',
   operation_running: '正在执行：%s',
@@ -185,6 +188,29 @@ return view.extend({
     return this.editor.value;
   },
 
+  replaceEditor(content) {
+    if (typeof content !== 'string') throw new Error(messages.content_invalid);
+    if (new Blob([content]).size > 65536) throw new Error(messages.config_too_large);
+    if (this.editor.value !== this.savedText && !window.confirm('放弃当前未保存的修改并载入新配置？')) return false;
+    this.editor.value = content;
+    this.updateDirty();
+    return true;
+  },
+
+  async fetchConfig() {
+    const url = this.configUrl.value.trim();
+    if (!/^https?:\/\//i.test(url)) throw new Error(messages.url_invalid);
+    const result = checked(await api.fetchConfig(url));
+    if (this.replaceEditor(result.content)) this.notify('在线配置已载入编辑器，尚未保存。');
+  },
+
+  async importFile(file) {
+    if (!file) return;
+    if (!/\.json$/i.test(file.name)) throw new Error('请选择 JSON 配置文件');
+    const content = await file.text();
+    if (this.replaceEditor(content)) this.notify('本地配置已载入编辑器，尚未保存。');
+  },
+
   async queue(name, revision) {
     checked(await api.action(name, revision || ''));
     this.status.busy = true;
@@ -231,14 +257,15 @@ return view.extend({
     ]);
   },
 
-  async save() {
+  async save(apply) {
     const content = this.content();
     const result = checked(await api.save(content, this.revision));
     this.savedText = content;
     this.revision = result.revision;
     this.status.revision = result.revision;
     this.updateDirty();
-    await this.queue('apply', result.revision);
+    if (apply) await this.queue('apply', result.revision);
+    else this.notify(message(result));
   },
 
   updateStatus(status) {
@@ -311,6 +338,23 @@ return view.extend({
       'aria-label': 'sing-box JSON 配置',
       input: () => this.updateDirty(),
     });
+    this.configUrl = E('input', {
+      class: 'cbi-input-text',
+      type: 'url',
+      placeholder: 'https://example.com/config.json',
+      'aria-label': '在线配置 URL',
+    });
+    const fileInput = E('input', {
+      type: 'file',
+      accept: '.json,application/json',
+      hidden: '',
+      style: 'display:none',
+      change: (event) => {
+        const file = event.target.files && event.target.files[0];
+        event.target.value = '';
+        this.run(() => this.importFile(file), true);
+      },
+    });
     const checkbox = new ui.Checkbox('0', { id: 'sing-box-autostart' }).render();
     this.boot = checkbox.querySelector('input[type="checkbox"]');
     this.boot.setAttribute('aria-label', '开机启动');
@@ -329,12 +373,11 @@ return view.extend({
       field(
         '运行面板',
         E(
-          'a',
+          'button',
           {
+            type: 'button',
             class: 'cbi-button cbi-button-action',
-            href: '/luci-static/sing-box/dashboard/index.html',
-            target: '_blank',
-            rel: 'noopener noreferrer',
+            click: () => window.open('/luci-static/sing-box/dashboard/index.html', '_blank', 'noopener,noreferrer'),
           },
           '独立打开',
         ),
@@ -353,10 +396,14 @@ return view.extend({
       ]),
     ]);
     const config = E('div', { 'data-tab': 'config', 'data-tab-title': '配置' }, [
-      E(
-        'div',
-        { class: 'cbi-section-descr' },
-        '直接编辑 JSON。校验不保存；保存并应用会先写入文件，校验通过后重启服务。',
+      field(
+        '导入配置',
+        E('div', { class: 'sing-box-actions' }, [
+          this.configUrl,
+          this.button('拉取', () => this.fetchConfig(), 'action', true, true),
+          fileInput,
+          this.button('上传 JSON', () => fileInput.click(), 'action', true, true),
+        ]),
       ),
       this.dirty,
       this.editor,
@@ -392,7 +439,8 @@ return view.extend({
           true,
           true,
         ),
-        this.button('保存并应用', () => this.save(), 'apply', true, true),
+        this.button('保存', () => this.save(false), 'action', true, true),
+        this.button('保存并应用', () => this.save(true), 'apply', true, true),
       ]),
     ]);
     this.logHint = E('div', { class: 'cbi-section-descr', role: 'status' });
