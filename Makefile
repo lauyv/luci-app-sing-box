@@ -13,6 +13,8 @@ ifneq ($(LUCI_SING_BOX_VERSION),)
 endif
 
 define Build/Prepare/luci-app-sing-box
+	test -s $(CURDIR)/htdocs/luci-static/sing-box/dashboard/index.html || \
+		{ echo "Run bash dashboard/build.sh before building the LuCI package" >&2; exit 1; }
 	chmod 0755 $(PKG_BUILD_DIR)/root/usr/libexec/rpcd/luci.sing-box \
 		$(PKG_BUILD_DIR)/root/usr/libexec/sing-box-panel-worker
 endef

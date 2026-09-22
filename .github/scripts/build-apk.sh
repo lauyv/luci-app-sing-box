@@ -7,6 +7,9 @@ set -euo pipefail
   echo "Release tag must be vMAJOR.MINOR.PATCH" >&2; exit 1;
 }
 SOURCE_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
+[[ -s "$SOURCE_DIR/htdocs/luci-static/sing-box/dashboard/index.html" ]] || {
+  echo "Run bash dashboard/build.sh before packaging" >&2; exit 1;
+}
 TOOLS_DIR=$(cd "$TOOLS_DIR" && pwd)
 DIST="$SOURCE_DIR/dist"
 RELEASE=$(sed -n 's/^PKG_RELEASE:=//p' "$SOURCE_DIR/Makefile")
@@ -15,6 +18,7 @@ VERSION="${RELEASE_TAG#v}-r$RELEASE"
 DEPENDS=$(sed -n 's/^LUCI_DEPENDS:=//p' "$SOURCE_DIR/Makefile" | tr -d '+')
 LICENSE=$(sed -n 's/^PKG_LICENSE:=//p' "$SOURCE_DIR/Makefile")
 WORK=$(mktemp -d "${RUNNER_TEMP:-/tmp}/sing-box-package.XXXXXX")
+trap 'rm -rf -- "$WORK"' EXIT
 MAIN="$WORK/main"
 mkdir -p "$MAIN/www" "$DIST"
 cp -R "$SOURCE_DIR/root/." "$MAIN/"

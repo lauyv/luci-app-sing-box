@@ -1,0 +1,2718 @@
+--- a/index.html
++++ b/index.html
+@@ -1,19 +1,15 @@
+ <!doctype html>
+-<html lang="">
++<html lang="zh-CN">
+   <head>
+     <meta charset="UTF-8" />
+     <title>zashboard</title>
+     <meta
+       name="viewport"
+-      content="user-scalable=no, width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
++      content="width=device-width, initial-scale=1, viewport-fit=cover"
+     />
+     <meta
+       name="description"
+       content="A dashboard using clash API"
+-    />
+-    <link
+-      rel="apple-touch-icon"
+-      href="./apple-touch-icon.png"
+     />
+     <link
+       rel="icon"
+--- a/src/App.vue
++++ b/src/App.vue
+@@ -2,29 +2,18 @@
+ // 后端会话(内核探测 + 首屏数据 + 常驻流)自己跟着 activeBackend 走,
+ // 这里只需保证模块被加载,不依赖任何页面挂载。
+ import './assembly/session'
+-import { computed, onMounted, ref, type Ref, watch } from 'vue'
++import { onMounted, ref, type Ref, watch } from 'vue'
+ import { RouterView } from 'vue-router'
+ import BackendConnectionError from './components/common/BackendConnectionError.vue'
+ import BackendSwitchToast from './components/common/BackendSwitchToast.vue'
+ import BackendManager from './components/settings/backend/BackendManager.vue'
+-import UpdateConfigModal from './components/settings/backend/UpdateConfigModal.vue'
+-import UpgradeCoreModal from './components/settings/backend/UpgradeCoreModal.vue'
+ import { useAppearanceVars } from './composables/useAppearanceVars'
+-import { showUpdateConfigModal, showUpgradeCoreModal } from './composables/backendActions'
+ import ConfirmDialogHost from './components/common/ConfirmDialogHost.vue'
+ import { useKeyboard } from './composables/keyboard'
+-import { useSingboxDeprecationNotice } from './composables/singboxDeprecationNotice'
+-import { EMOJIS, FONTS } from './constant'
+-import {
+-  autoImportSettings,
+-  autoSyncSettings,
+-  importSettingsFromUrl,
+-  syncSettingsFromCore,
+-} from './helper/autoImportSettings'
+ import { backgroundImage } from './helper/indexeddb'
+ import { initNotification } from './helper/notification'
+ import { getBackendFromUrl, isPreferredDark } from './helper/utils'
+-import { disablePullToRefresh, emoji, font, theme } from './store/settings'
++import { disablePullToRefresh, theme } from './store/settings'
+ import { backendList, setActiveBackend } from './store/setup'
+ import type { Backend } from './types'
+ 
+@@ -33,29 +22,7 @@
+ 
+ initNotification(toast as Ref<HTMLElement>)
+ 
+-// 字体类名映射表
+-const FONT_CLASS_MAP = {
+-  [EMOJIS.TWEMOJI]: {
+-    [FONTS.MI_SANS]: 'font-MiSans-Twemoji',
+-    [FONTS.SARASA_UI]: 'font-SarasaUI-Twemoji',
+-    [FONTS.PING_FANG]: 'font-PingFang-Twemoji',
+-    [FONTS.FIRA_SANS]: 'font-FiraSans-Twemoji',
+-    [FONTS.SYSTEM_UI]: 'font-SystemUI-Twemoji',
+-  },
+-  [EMOJIS.NOTO_COLOR_EMOJI]: {
+-    [FONTS.MI_SANS]: 'font-MiSans-NotoEmoji',
+-    [FONTS.SARASA_UI]: 'font-SarasaUI-NotoEmoji',
+-    [FONTS.PING_FANG]: 'font-PingFang-NotoEmoji',
+-    [FONTS.FIRA_SANS]: 'font-FiraSans-NotoEmoji',
+-    [FONTS.SYSTEM_UI]: 'font-SystemUI-NotoEmoji',
+-  },
+-} as const
+-
+-const fontClassName = computed(() => {
+-  return (
+-    FONT_CLASS_MAP[emoji.value]?.[font.value] || FONT_CLASS_MAP[EMOJIS.TWEMOJI][FONTS.SYSTEM_UI]
+-  )
+-})
++const fontClassName = 'font-SystemUI-Twemoji'
+ 
+ const setThemeColor = () => {
+   if (!app.value) return
+@@ -176,25 +143,10 @@
+ 
+ autoSwitchToURLBackendIfExists()
+ 
+-onMounted(async () => {
+-  setThemeColor()
+-
+-  if (autoImportSettings.value) {
+-    await importSettingsFromUrl()
+-  }
+-
+-  if (autoSyncSettings.value) {
+-    try {
+-      await syncSettingsFromCore()
+-    } catch (e) {
+-      console.error('Failed to auto-sync settings on app load:', e)
+-    }
+-  }
+-})
++onMounted(setThemeColor)
+ 
+ useAppearanceVars()
+ useKeyboard()
+-useSingboxDeprecationNotice()
+ </script>
+ 
+ <template>
+@@ -212,13 +164,6 @@
+     <BackendSwitchToast />
+     <BackendConnectionError />
+     <BackendManager />
+-    <!-- 后端维护动作的弹窗:侧边栏菜单和设置页都会拉起,挂在这里两处入口才都有效。 -->
+-    <UpgradeCoreModal v-model="showUpgradeCoreModal" />
+-    <UpdateConfigModal v-model="showUpdateConfigModal" />
+-    <!--
+-      确认弹窗排在所有弹窗之后:它们都 teleport 到 #app-content 且同一层 z-index,
+-      谁后插进 DOM 谁在上面。升级内核的确认是从弹窗里拉起的,排前面就会被压在底下。
+-    -->
+     <ConfirmDialogHost />
+     <div
+       ref="toast"
+--- a/src/api/geoip.ts
++++ b/src/api/geoip.ts
+@@ -329,7 +329,7 @@
+     return ''
+   }
+ 
+-  const preferChinese = language.value === LANG.ZH_CN || language.value === LANG.ZH_TW
++  const preferChinese = language.value === LANG.ZH_CN
+ 
+   return preferChinese ? (names['zh-CN'] ?? names.en) : names.en
+ }
+--- a/src/assembly/backend.ts
++++ b/src/assembly/backend.ts
+@@ -1,183 +1,57 @@
+-// 组装层 · 后端判别与能力表。
+-//
+-// 这里只有两条正交的判别轴,且**仅限 assembly 层内部使用**
+-//(components / views / composables 由 eslint no-restricted-imports 禁止导入):
+-//
+-//   channel —— 用户配置的连接通道(activeBackend.type)。确定性事实,同步可知,
+-//              决定走 sing-box API(gRPC)还是 Clash REST/WS。
+-//   core    —— 运行时内核品牌。靠 /version 字符串嗅探得来,是启发式猜测,
+-//              可能误判(分支核 / 兼容核),且拉取完成前为 'unknown'。
+-//
+-// 两轴交叉出四种实际在用的 API 形态:
+-//   A. channel=clash   + core=mihomo   mihomo 的 Clash API
+-//   B. channel=clash   + core=singbox  sing-box 的 Clash 兼容 API(端点子集 + 少量专属端点)
+-//   C. channel=clash   + core=honk     honk 的 Clash 兼容 API(又一个端点子集)
+-//   D. channel=singbox + core=singbox  sing-box API(gRPC)
+-//
+-// 能力表据此分两类,一律通过 can() 读取:
+-//   hard —— 由 channel / apiVersion 决定。确定事实,任何情况下都掰不开。
+-//   soft —— 由 core 决定。因探测是启发式,允许用户用 displayAllFeatures 强制掰开
+-//           (提示文案承诺:fork 版内核可能支持官方版没有的功能)。
+-//
+-// 注意:能凭响应数据自证的差异(如 rules 开关端点由 rule.uuid 决定、smart 由
+-// proxy.type 决定)不进此表,就近放在对应的 assembly 子模块里 —— 数据比版本
+-// 字符串可靠,不该被降级成全局猜测。
+-
+-import { probeClashChannel } from '@/api/clash'
++// Native sing-box API only. No REST compatibility channel is shipped.
+ import type { ProbeResult } from '@/helper/connectivity'
+-import { displayAllFeatures } from '@/store/settings'
+ import { activeBackend } from '@/store/setup'
+ import type { Backend } from '@/types'
+-import { computed, ref } from 'vue'
+-
+-// usbip 需要 sing-box gRPC API v2(ProvideUSBDevices 流)
+-const USBIP_MIN_API_VERSION = 2
+-// OpenVPN 需要 sing-box gRPC API v3(SubscribeOpenVPNStatus 流)
+-const OPENVPN_MIN_API_VERSION = 3
+-// Taildrop 需要 sing-box gRPC API v4(SubscribeTaildropInbox / SendTaildropFiles 等)
+-const TAILDROP_MIN_API_VERSION = 4
+-
+-export enum Channel {
+-  Clash = 'clash',
+-  Singbox = 'singbox',
+-}
++import { ref } from 'vue'
+ 
+ export enum Core {
+-  Mihomo = 'mihomo',
+   Singbox = 'singbox',
+-  Honk = 'honk',
+   Unknown = 'unknown',
+ }
+-
+-export const channel = computed<Channel>(() =>
+-  activeBackend.value?.type === 'singbox' ? Channel.Singbox : Channel.Clash,
+-)
+-
+-// core / apiVersion 由 assembly/version.ts 在探测 /version 后写入,
+-// 后端切换时先重置为未知,避免沿用上一个后端的结论。
+ export const core = ref<Core>(Core.Unknown)
+-export const apiVersion = ref(0)
+-
+ export const resetCore = () => {
+   core.value = Core.Unknown
+-  apiVersion.value = 0
+ }
+-
+-// displayAllFeatures 的适用范围:Clash 通道上跑着非 mihomo 内核(sing-box / honk)时。
+-// 该开关的语义是「我用的 fork 版内核也支持这些 mihomo 扩展端点,先显示出来」——
+-// 只有在 Clash 通道上,那些端点才有可能存在。sing-box API(gRPC)通道上它们压根不是
+-// 同一套协议,掰开只会打出必然失败的请求,所以那里既不显示开关,存量的 true 也不生效。
+-// core 未探测出结论(Unknown)时不掰,免得凭空点亮一堆按钮。
+-const isNonMihomoClashCore = computed(
+-  () =>
+-    channel.value === Channel.Clash && (core.value === Core.Singbox || core.value === Core.Honk),
+-)
+-
+-const isForkCoreOverride = computed(() => isNonMihomoClashCore.value && displayAllFeatures.value)
+-
+-// 开关自身的可见性与其生效范围保持一致。
+-export const showDisplayAllFeatures = computed(
+-  () => !!activeBackend.value && isNonMihomoClashCore.value,
+-)
+-
+-const hard = computed(() => {
+-  const clash = !!activeBackend.value && channel.value === Channel.Clash
+-  const singbox = !!activeBackend.value && channel.value === Channel.Singbox
+-
+-  return {
+-    // 弃用公告要覆盖两种 sing-box 用法:原生 gRPC 通道同步可知；Clash 兼容
+-    // 通道则等版本探测确认内核后再提示。
+-    singboxDeprecationNotice: singbox || core.value === Core.Singbox,
+-    rules: clash,
+-    dnsQuery: clash,
+-    dnsFlush: clash,
+-    fakeIPFlush: clash,
+-    coreActions: clash,
+-    dashboardUpgrade: clash,
+-
+-    tools: singbox,
+-    goroutines: singbox,
+-    startedAt: singbox,
+-    usbip: singbox && apiVersion.value >= USBIP_MIN_API_VERSION,
+-    openvpn: singbox && apiVersion.value >= OPENVPN_MIN_API_VERSION,
+-    taildrop: singbox && apiVersion.value >= TAILDROP_MIN_API_VERSION,
+-  }
+-})
+-
+-const soft = computed(() => {
+-  const singbox = core.value === Core.Singbox
+-  const mihomo = core.value === Core.Mihomo
+-  const honk = core.value === Core.Honk
+-  const mihomoOrForkCore = mihomo || isForkCoreOverride.value
+-
+-  return {
+-    // ---------- mihomo 内核侧 ----------
+-    coreUpgrade: mihomoOrForkCore,
+-    coreRestart: mihomoOrForkCore,
+-    reloadConfigs: mihomoOrForkCore,
+-    updateConfigs: mihomoOrForkCore,
+-    updateGeoDatabase: mihomoOrForkCore,
+-    // /storage/zashboard 设置同步,mihomo 扩展
+-    syncSettings: mihomoOrForkCore,
+-    independentLatency: mihomoOrForkCore,
+-    coreUpdateCheck: mihomo,
+-    // ports / tun / allow-lan 等 PATCH /configs 配置块。
+-    configPatch: mihomo,
+-
+-    // ---------- sing-box 内核侧 ----------
+-    // 自定义全局节点
+-    customGlobalNode: singbox,
+-    // sing-box 日志 payload 带 "[type]:" 前缀,可据此做类型分面过滤
+-    logTypeFilter: singbox,
+-    // sing-box 日志以 "[连接id 耗时]" 开头,可据此从日志跳到对应连接
+-    logConnectionDetail: singbox,
+-    // sing-box 切换模式后需要主动断开命中 clash_mode 规则的连接
+-    disconnectOnModeChange: singbox,
+-
+-    // ---------- 日志级别集合 ----------
+-    // /logs?level= 传了内核不认的级别会被 400 掉,WS 随后陷入无限重连,
+-    // 所以按内核各自支持的取值逐档点亮,拼装见 assembly/logs。
+-    // trace:sing-box 与 honk 有,mihomo 没有
+-    traceLogLevel: singbox || honk,
+-    // fatal / panic:仅 sing-box
+-    extraLogLevels: singbox,
+-    // silent:mihomo 与 sing-box 有,honk 没有
+-    silentLogLevel: mihomo || singbox,
+-  }
+-})
+-
+-type HardCaps = typeof hard.value
+-type SoftCaps = typeof soft.value
+-
+-export type HardCap = keyof HardCaps
+-export type SoftCap = keyof SoftCaps
+-export type Cap = HardCap | SoftCap
+-
+-export const can = (cap: Cap): boolean => {
+-  if (!activeBackend.value) return false
+-
+-  const hardCaps = hard.value
+-
+-  if (cap in hardCaps) return hardCaps[cap as HardCap]
+-
+-  // displayAllFeatures 的覆盖已在 soft 表内按行决定,这里只查表。
+-  return soft.value[cap as SoftCap]
+-}
+-
+-// 后端连通性探测(供 Setup / EditBackend / 连接失败页使用)。
+-// 按通道选对应的探测,结果形状统一成 ProbeResult:成功带耗时,失败带可诊断的分类,
+-// 由 helper/connectivity 的 describeProbeFailure 翻译成给用户看的一句话。
++const capabilities = {
++  singboxDeprecationNotice: false,
++  rules: false,
++  dnsQuery: false,
++  dnsFlush: false,
++  fakeIPFlush: false,
++  coreActions: false,
++  dashboardUpgrade: false,
++  tools: false,
++  goroutines: true,
++  startedAt: true,
++  usbip: false,
++  openvpn: false,
++  taildrop: false,
++  coreUpgrade: false,
++  coreRestart: false,
++  reloadConfigs: false,
++  updateConfigs: false,
++  updateGeoDatabase: false,
++  syncSettings: false,
++  independentLatency: false,
++  coreUpdateCheck: false,
++  configPatch: false,
++  customGlobalNode: true,
++  logTypeFilter: true,
++  logConnectionDetail: true,
++  disconnectOnModeChange: true,
++  traceLogLevel: true,
++  extraLogLevels: true,
++  silentLogLevel: true,
++} as const
++export type Cap = keyof typeof capabilities
++export const can = (cap: Cap): boolean => !!activeBackend.value && capabilities[cap]
+ export const probeBackend = async (
+   backend: Backend,
+-  timeout: number = 10000,
++  timeout = 10000,
+   signal?: AbortSignal,
+ ): Promise<ProbeResult> => {
+-  if (backend.type === 'singbox') {
+-    const { probeSingboxChannel } = await import('@/api/singbox/client')
+-    return probeSingboxChannel(backend, timeout, signal)
+-  }
+-  return probeClashChannel(backend, timeout, signal)
++  const { probeSingboxChannel } = await import('@/api/singbox/client')
++  return probeSingboxChannel(backend, timeout, signal)
+ }
+-
+-export const isBackendAvailable = (backend: Backend, timeout: number = 10000) =>
++export const isBackendAvailable = (backend: Backend, timeout = 10000) =>
+   probeBackend(backend, timeout).then((result) => result.ok)
+--- a/src/assembly/config/index.ts
++++ b/src/assembly/config/index.ts
+@@ -1,5 +1,4 @@
+-// 组装层 · config 门面。持有统一的 configs 状态,按后端类型路由到 clash / singbox 实现。
+-import { Channel, channel } from '@/assembly/backend'
++// Native sing-box config state and actions.
+ import type { Config } from '@/types'
+ import { ref } from 'vue'
+ 
+@@ -23,20 +22,10 @@
+ 
+ export const configs = ref<Config>({ ...defaultConfig })
+ 
+-// 按需动态加载后端实现,避免 clash 后端下也实例化 sing-box gRPC。
+-const load = () => (channel.value === Channel.Singbox ? import('./singbox') : import('./clash'))
++// Load the native API implementation on demand.
++const load = () => import('./singbox')
+ 
+ export const fetchConfigs = async () => (await load()).fetchConfigs()
+ 
+ export const updateConfigs = async (cfg: Record<string, string | boolean | object | number>) =>
+   (await load()).updateConfigs(cfg)
+-
+-// 配置 / 缓存 / DNS 维护动作(Clash 专属),经 config 域门面暴露给 view。
+-export {
+-  flushDNSCacheAPI,
+-  flushFakeIPAPI,
+-  queryDNSAPI,
+-  reloadConfigsAPI,
+-  updateConfigsAPI,
+-  updateGeoDataAPI,
+-} from '@/api/clash'
+--- a/src/assembly/connections/index.ts
++++ b/src/assembly/connections/index.ts
+@@ -1,15 +1,12 @@
+-// 组装层 · connections 门面。连接流、断连/封锁动作,以及「原始连接数据 → view 字段」的
+-// 访问器与 getConnectionDisplayValue,都按后端类型动态路由到对应实现。
+-import { Channel, channel } from '@/assembly/backend'
++// Native sing-box connections state and actions.
+ import { CONNECTIONS_TABLE_ACCESSOR_KEY } from '@/constant'
+ import type { Connection } from '@/types'
+ import type { ConnectionDisplayOptions, ConnectionsSnapshot } from './accessor'
+-import * as clash from './clash'
+ import * as singbox from './singbox'
+ 
+ export type { ConnectionsSnapshot }
+ 
+-const backend = () => (channel.value === Channel.Singbox ? singbox : clash)
++const backend = () => singbox
+ 
+ export const disconnectByIdAPI = (id: string) => backend().disconnectByIdAPI(id)
+ 
+@@ -32,6 +29,3 @@
+   keys: CONNECTIONS_TABLE_ACCESSOR_KEY[],
+   options: ConnectionDisplayOptions,
+ ) => backend().getConnectionVisibleSearchValues(connection, keys, options)
+-
+-// 连接封锁动作(Clash 专属),经 connections 域门面暴露给 view。
+-export { blockConnectionByIdAPI } from '@/api/clash'
+--- a/src/assembly/logs/index.ts
++++ b/src/assembly/logs/index.ts
+@@ -1,14 +1,11 @@
+-// 组装层 · logs 门面。持有完整的 logs ref 与流控状态(暂停 / 级别),
+-// 按后端类型路由订阅,并经累加器把各后端原生日志批次组装进 logs ref。
+-// store 直接引用这里导出的 logs / initLogs,不再参与组装。
+-import { can, Channel, channel, core, Core } from '@/assembly/backend'
++// Native sing-box logs state and actions.
++import { can, core, Core } from '@/assembly/backend'
+ import { LOG_LEVEL } from '@/constant'
+ import { useStorage } from '@/helper/storage'
+ import { activeBackend } from '@/store/setup'
+ import type { LogWithSeq } from '@/types'
+ import { computed, ref, shallowRef, watch } from 'vue'
+ import { createLogsAccumulator } from './accumulator'
+-import * as clash from './clash'
+ import * as singbox from './singbox'
+ 
+ export const logs = shallowRef<LogWithSeq[]>([])
+@@ -37,7 +34,7 @@
+   if (cancel) initLogs()
+ })
+ 
+-const backend = () => (channel.value === Channel.Singbox ? singbox : clash)
++const backend = () => singbox
+ 
+ let cancel: (() => void) | undefined
+ 
+--- a/src/assembly/overview/index.ts
++++ b/src/assembly/overview/index.ts
+@@ -1,9 +1,7 @@
+-// 组装层 · overview 门面。memory / traffic 统计流按后端类型路由,统一返回 { data, close } 流。
+-import { Channel, channel } from '@/assembly/backend'
+-import * as clash from './clash'
++// Native sing-box overview state and actions.
+ import * as singbox from './singbox'
+ 
+-const backend = () => (channel.value === Channel.Singbox ? singbox : clash)
++const backend = () => singbox
+ 
+ export const fetchMemoryAPI = <T>() => backend().fetchMemoryAPI<T>()
+ 
+--- a/src/assembly/proxies/index.ts
++++ b/src/assembly/proxies/index.ts
+@@ -1,7 +1,5 @@
+-// 组装层 · proxies 门面。
+-// 持有两种后端(clash / sing-box)共用的代理「视图状态」与纯读取 helper,
+-// 并按后端类型路由到 clash(拉取式)/ singbox(流驱动)的组装实现。
+-import { can, Channel, channel } from '@/assembly/backend'
++// Native sing-box proxies state and actions.
++import { can } from '@/assembly/backend'
+ import { NOT_CONNECTED, PROXY_TAB_TYPE, PROXY_TYPE, TEST_URL } from '@/constant'
+ import { notifyRequestError } from '@/helper/requestError'
+ import { useStorage } from '@/helper/storage'
+@@ -145,8 +143,7 @@
+   allProxiesLatencyTest: () => Promise<unknown>
+ }
+ 
+-const load = (): Promise<ProxiesBackend> =>
+-  channel.value === Channel.Singbox ? import('./singbox') : import('./clash')
++const load = (): Promise<ProxiesBackend> => import('./singbox')
+ 
+ export const fetchProxies = async () => (await load()).fetchProxies()
+ 
+@@ -177,12 +174,3 @@
+   const m = await import('./singbox')
+   m.resetProxies()
+ }
+-
+-// 代理集 / smart 权重动作(Clash 专属),经 proxies 域门面暴露给 view 与 store/smart。
+-export {
+-  fetchSmartGroupWeightsAPI,
+-  fetchSmartWeightsAPI,
+-  flushSmartGroupWeightsAPI,
+-  proxyProviderHealthCheckAPI,
+-  updateProxyProviderAPI,
+-} from '@/api/clash'
+--- a/src/assembly/rules/index.ts
++++ b/src/assembly/rules/index.ts
+@@ -1,7 +1,4 @@
+-// 组装层 · rules 门面。持有 rules / ruleProviderList 统一状态与渲染派生,
+-// 按后端类型路由到 clash / singbox 实现(sing-box 不支持 rules)。
+-import { toggleRuleDisabledAPI, toggleRuleDisabledSingBoxAPI } from '@/api/clash'
+-import { Channel, channel } from '@/assembly/backend'
++// Native sing-box rules state and actions.
+ import { RULE_TAB_TYPE } from '@/constant'
+ import { toSearchRegex } from '@/helper/search'
+ import type { Rule, RuleProvider } from '@/types'
+@@ -37,17 +34,6 @@
+   })
+ })
+ 
+-const load = () => (channel.value === Channel.Singbox ? import('./singbox') : import('./clash'))
++const load = () => import('./singbox')
+ 
+ export const fetchRules = async () => (await load()).fetchRules()
+-
+-// 规则启用切换在 Clash 通道上有两套端点:sing-box 的规则带稳定 uuid(PUT /rules/{uuid}),
+-// mihomo 按索引批量切换(PATCH /rules/disable)。用哪套由响应数据自己决定 ——
+-// rule.uuid 是确定信息,比 core 轴的版本字符串嗅探可靠,故不走能力表。
+-export const toggleRuleDisabled = (rule: Rule, disabled: boolean) =>
+-  rule.uuid
+-    ? toggleRuleDisabledSingBoxAPI(rule.uuid)
+-    : toggleRuleDisabledAPI({ [rule.index]: disabled })
+-
+-// 规则集更新动作(Clash 专属),经 rules 域门面暴露给 view。
+-export { updateRuleProviderAPI } from '@/api/clash'
+--- a/src/assembly/version.ts
++++ b/src/assembly/version.ts
+@@ -1,248 +1,72 @@
+-// 组装层 · 版本与升级。
+-// fetchVersionAPI 按通道选择 Clash /version 或 sing-box gRPC getVersion,
+-// 并把结果统一成 { data: { version } } 形状。
+-// 版本字符串是 core 轴(assembly/backend.ts)的唯一来源:这里探测完成后写入 core,
+-// 后端切换的瞬间先重置为 'unknown',避免沿用上一个后端的结论。
+-import { fetchClashVersion, restartCoreAPI, upgradeCoreAPI, upgradeUIAPI } from '@/api/clash'
+-import HonkLogo from '@/assets/images/honk.svg'
+-import MetacubexLogo from '@/assets/images/metacubex.jpg'
++import { getSingboxClient } from '@/api/singbox/client'
+ import SingBoxLogo from '@/assets/images/sing-box.svg'
+-import { MIHOMO, MIHOMO_CHANNEL } from '@/constant'
+ import { getRequestErrorMessage } from '@/helper/requestError'
+-import { autoUpgradeCore, autoUpgradeDashboard, checkUpgradeCore } from '@/store/settings'
+ import { activeBackend } from '@/store/setup'
+ import type { Backend } from '@/types'
+-import { computed, nextTick, ref } from 'vue'
+-import { apiVersion, can, Channel, channel, core, Core, resetCore } from './backend'
++import { computed, ref } from 'vue'
++import { core, Core, resetCore } from './backend'
+ 
+-export const version = ref()
+-export const isCoreUpdateAvailable = ref(false)
+-export const zashboardVersion = ref(__APP_VERSION__)
+-
+-// 切后端时本来就要打一次 /version,顺手把它的结果暴露成连通性状态,
+-// 给切换提示用 —— 不额外发探测请求,量的也正是实际在用的那条 API。
++export const version = ref('')
+ export type BackendProbe = {
+   uuid: string
+   status: 'probing' | 'connected' | 'failed'
+-  // 拿到 /version 响应的耗时(ms),failed 时无意义。
+   latency: number
+   message: string
+ }
++export const backendProbe = ref<BackendProbe | undefined>()
++export const startedAt = ref(0)
++export const coreBrand = computed(() => ({
++  logo: SingBoxLogo,
++  url: 'https://github.com/sagernet/sing-box',
++}))
+ 
+-export const backendProbe = ref<BackendProbe | undefined>()
++let generation = 0
+ 
+-// sing-box 内核启动时刻(ms epoch);0 表示未知 / 当前后端无此能力。
+-// 仅 sing-box API(GetStartedAt)提供,Clash /version 无运行时长。
+-export const startedAt = ref(0)
++const probeBackend = async (backend: Backend, current: number) => {
++  // Capture this session's client before awaiting; edits can retain the same backend UUID.
++  const client = getSingboxClient()?.client
++  const isCurrent = () => current === generation
++  const start = Date.now()
++  try {
++    if (!client) throw new Error('sing-box API client unavailable')
++    const response = await client.getVersion({})
++    if (!isCurrent()) return
+ 
+-// honk 的 /version 返回 "honk <semver>"(见 honk-core/src/clash_api.rs 的 version handler)。
+-const detectCore = (versionString: string): Core => {
+-  if (!versionString) return Core.Unknown
+-  if (versionString.includes('sing-box')) return Core.Singbox
+-  if (/\bhonk\b/i.test(versionString)) return Core.Honk
+-  return Core.Mihomo
+-}
+-
+-// 内核品牌的展示信息(logo / 官网链接)。纯展示,不是能力门控,故允许 view 使用。
+-export const coreBrand = computed(() => {
+-  switch (core.value) {
+-    case Core.Singbox:
+-      return { logo: SingBoxLogo, url: 'https://github.com/sagernet/sing-box' }
+-    case Core.Honk:
+-      return { logo: HonkLogo, url: 'https://github.com/Glassyiris/honk' }
+-    default:
+-      return {
+-        logo: MetacubexLogo,
+-        url: MIHOMO_CHANNEL[mihomo.value?.[0] ?? MIHOMO.Meta].url,
+-      }
+-  }
+-})
+-
+-export const mihomo = computed<[MIHOMO, string] | undefined>(() => {
+-  if (core.value !== Core.Mihomo) return undefined
+-
+-  const match = /(alpha-smart|alpha|beta|meta)-?(\w+)/.exec(version.value)
+-  switch (match?.[1]) {
+-    case 'alpha':
+-      return [MIHOMO.Alpha, match[2] ?? version.value]
+-    case 'alpha-smart':
+-      return [MIHOMO.Smart, match[2] ?? version.value]
+-    case 'meta':
+-      return [MIHOMO.Meta, match[2] ?? version.value]
+-    default:
+-      return [MIHOMO.Meta, version.value]
+-  }
+-})
+-
+-const fetchSingboxVersion = async () => {
+-  const { getSingboxClient } = await import('@/api/singbox/client')
+-  const client = getSingboxClient()?.client
+-  if (!client) return { data: { version: 'sing-box' } }
+-  const v = await client.getVersion({})
+-  apiVersion.value = v.apiVersion
+-  const version = v.version.includes('sing-box') ? v.version : `sing-box ${v.version}`
+-  return { data: { version } }
+-}
+-
+-export const fetchVersionAPI = () =>
+-  channel.value === Channel.Singbox ? fetchSingboxVersion() : fetchClashVersion()
+-
+-const fetchSingboxStartedAt = async (): Promise<number> => {
+-  const { getSingboxClient } = await import('@/api/singbox/client')
+-  const client = getSingboxClient()?.client
+-  if (!client) return 0
+-  try {
+-    const res = await client.getStartedAt({})
+-    return Number(res.startedAt)
+-  } catch {
+-    return 0
++    version.value = response.version.includes('sing-box')
++      ? response.version
++      : `sing-box ${response.version}`
++    core.value = Core.Singbox
++    backendProbe.value = {
++      uuid: backend.uuid,
++      status: 'connected',
++      latency: Date.now() - start,
++      message: '',
++    }
++    // Older native API versions may not expose the start time.
++    const timestamp = await client
++      .getStartedAt({})
++      .then((result) => Number(result.startedAt))
++      .catch(() => 0)
++    if (isCurrent()) startedAt.value = timestamp
++  } catch (error) {
++    if (!isCurrent()) return
++    backendProbe.value = {
++      uuid: backend.uuid,
++      status: 'failed',
++      latency: 0,
++      message: getRequestErrorMessage(error),
++    }
+   }
+ }
+ 
+-const probeBackend = async (backend: Backend) => {
+-  const startAt = Date.now()
+-  let data
+-
+-  try {
+-    ;({ data } = await fetchVersionAPI())
+-  } catch (e) {
+-    if (activeBackend.value?.uuid === backend.uuid) {
+-      backendProbe.value = {
+-        uuid: backend.uuid,
+-        status: 'failed',
+-        latency: 0,
+-        message: getRequestErrorMessage(e),
+-      }
+-    }
+-    throw e
+-  }
+-
+-  // 探测期间用户可能又切了后端,过期结果直接丢弃。
+-  if (activeBackend.value?.uuid !== backend.uuid) return
+-
+-  version.value = data?.version || ''
+-  core.value = detectCore(version.value)
+-  backendProbe.value = {
+-    uuid: backend.uuid,
+-    status: 'connected',
+-    latency: Date.now() - startAt,
+-    message: '',
+-  }
+-  startedAt.value = can('startedAt') ? await fetchSingboxStartedAt() : 0
+-
+-  if (!can('coreUpdateCheck') || !checkUpgradeCore.value || backend.disableUpgradeCore) return
+-
+-  isCoreUpdateAvailable.value = await fetchBackendUpdateAvailableAPI()
+-
+-  if (isCoreUpdateAvailable.value && autoUpgradeCore.value) {
+-    // 自动升级不是用户点的,失败静默
+-    upgradeCoreAPI('auto').catch(() => {})
+-  }
+-}
+-
+-// 当前后端的内核探测。core 未就绪前依赖它的判断都不可信,
+-// 需要等结论的调用方(如登录后的设置同步)用 coreReady() 等待。
+-let probe: Promise<void> = Promise.resolve()
+-
+-export const coreReady = async () => {
+-  // 先让会话的 watcher 跑完,确保拿到的是新后端的探测,而非上一次的残留。
+-  await nextTick()
+-  await probe
+-}
+-
+-// 由 assembly/session 在每次会话开始时调用:先把上一个后端的结论清干净,
+-// 再对当前后端重新探测。返回的 promise 只给 coreReady 用,调用方不必等。
+ export const probeActiveBackend = () => {
++  const current = ++generation
+   const backend = activeBackend.value
+-
+   resetCore()
+   version.value = ''
+   startedAt.value = 0
+-  isCoreUpdateAvailable.value = false
+   backendProbe.value = backend
+     ? { uuid: backend.uuid, status: 'probing', latency: 0, message: '' }
+     : undefined
+-
+-  probe = backend ? probeBackend(backend).catch(() => {}) : Promise.resolve()
+-  return probe
++  return backend ? probeBackend(backend, current) : Promise.resolve()
+ }
+-
+-const CACHE_DURATION = 1000 * 60 * 60
+-
+-interface CacheEntry<T> {
+-  timestamp: number
+-  version: string
+-  data: T
+-}
+-
+-async function fetchWithLocalCache<T>(url: string, version: string): Promise<T> {
+-  const cacheKey = 'cache/' + url
+-  const cacheRaw = localStorage.getItem(cacheKey)
+-
+-  if (cacheRaw) {
+-    try {
+-      const cache: CacheEntry<T> = JSON.parse(cacheRaw)
+-      const now = Date.now()
+-
+-      if (now - cache.timestamp < CACHE_DURATION && cache.version === version) {
+-        return cache.data
+-      } else {
+-        localStorage.removeItem(cacheKey)
+-      }
+-    } catch (e) {
+-      console.warn('Failed to parse cache for', url, e)
+-    }
+-  }
+-
+-  const response = await fetch(url)
+-  if (!response.ok) {
+-    throw new Error(`Fetch failed: ${response.status} ${response.statusText}`)
+-  }
+-
+-  const data: T = await response.json()
+-  const newCache: CacheEntry<T> = {
+-    timestamp: Date.now(),
+-    version,
+-    data,
+-  }
+-
+-  localStorage.setItem(cacheKey, JSON.stringify(newCache))
+-  return data
+-}
+-
+-export const fetchIsUIUpdateAvailable = async () => {
+-  const { tag_name } = await fetchWithLocalCache<{ tag_name: string }>(
+-    'https://api.github.com/repos/Zephyruso/zashboard/releases/latest',
+-    zashboardVersion.value,
+-  )
+-
+-  return Boolean(tag_name && tag_name !== `v${zashboardVersion.value}`)
+-}
+-
+-const check = async (url: string, versionNumber: string) => {
+-  const { assets } = await fetchWithLocalCache<{ assets: { name: string }[] }>(url, versionNumber)
+-  const alreadyLatest = assets.some(({ name }) => name.includes(versionNumber))
+-
+-  return !alreadyLatest
+-}
+-
+-export const fetchBackendUpdateAvailableAPI = async () => {
+-  return await check(
+-    MIHOMO_CHANNEL[mihomo.value?.[0] ?? MIHOMO.Meta].check_update_url,
+-    mihomo.value?.[1] ?? version.value,
+-  )
+-}
+-
+-// 仪表盘(UI)更新检查,迁自 composables/settings.ts 的 useSettings。
+-export const isUIUpdateAvailable = ref(false)
+-
+-export const checkUIUpdate = async () => {
+-  isUIUpdateAvailable.value = await fetchIsUIUpdateAvailable()
+-  if (isUIUpdateAvailable.value && autoUpgradeDashboard.value) {
+-    // 自动升级不是用户点的,失败静默
+-    upgradeUIAPI().catch(() => {})
+-  }
+-}
+-
+-// 内核 / UI 维护动作(Clash 专属,无后端分支),经版本域门面暴露给 view。
+-export { restartCoreAPI, upgradeCoreAPI, upgradeUIAPI }
+--- a/src/assets/main.css
++++ b/src/assets/main.css
+@@ -7,7 +7,7 @@
+  *   utilities/   跨组件的工具类（用户可调外观、动画）
+  */
+ 
+-@import 'tailwindcss';
++@import 'tailwindcss' source(none);
+ 
+ @import './styles/theme/setup.css';
+ @import './styles/theme/fonts.css';
+--- a/src/assets/styles/components/app.css
++++ b/src/assets/styles/components/app.css
+@@ -42,29 +42,6 @@
+   }
+ }
+ 
+-/* ---------- 底部 dock ---------- */
+-
+-.dock {
+-  @apply absolute right-2 left-2 z-30 rounded-3xl;
+-  backdrop-filter: blur(20px) saturate(180%);
+-  border: 1px solid color-mix(in srgb, var(--color-base-content) 8%, transparent);
+-  box-shadow:
+-    0 4px 16px color-mix(in srgb, var(--color-base-content) 6%, transparent),
+-    inset 0 1px 0 color-mix(in srgb, white 35%, transparent),
+-    inset 0 0 0 1px color-mix(in srgb, white 6%, transparent);
+-}
+-
+-/* ---------- 侧栏 ---------- */
+-
+-/* 高亮完全交给滑动指示器（见 utilities/motion.css），因此清掉 daisyUI menu 自带的态背景 */
+-.sidebar-route-menu > li > a:hover,
+-.sidebar-route-menu > li > a:active,
+-.sidebar-route-menu > li > a:focus-visible {
+-  background-color: transparent;
+-  background-image: none;
+-  box-shadow: none;
+-}
+-
+ /* ---------- 设置页 ---------- */
+ 
+ .settings-section-label {
+--- a/src/assets/styles/theme/fonts.css
++++ b/src/assets/styles/theme/fonts.css
+@@ -1,32 +1,11 @@
+-/*
+- * 字体族令牌与内置 emoji 字体。
+- * 每个正文字体都要和一套 emoji 字体配对，具体加载策略见 src/assets/load-fonts.ts。
+- */
+-
+ @theme {
+-  --font-MiSans-NotoEmoji: 'MiSans-VF', 'NotoEmoji', system-ui;
+-  --font-SarasaUI-NotoEmoji: 'SarasaUiSC-Regular', 'NotoEmoji', system-ui;
+-  --font-PingFang-NotoEmoji: 'PingFangSC-Regular', 'NotoEmoji', system-ui;
+-  --font-FiraSans-NotoEmoji: 'Fira Sans', 'NotoEmoji', system-ui;
+-  --font-SystemUI-NotoEmoji: 'NotoEmoji', system-ui;
+-
+-  --font-MiSans-Twemoji: 'MiSans-VF', 'Twemoji', system-ui;
+-  --font-SarasaUI-Twemoji: 'SarasaUiSC-Regular', 'Twemoji', system-ui;
+-  --font-PingFang-Twemoji: 'PingFangSC-Regular', 'Twemoji', system-ui;
+-  --font-FiraSans-Twemoji: 'Fira Sans', 'Twemoji', system-ui;
+   --font-SystemUI-Twemoji: 'Twemoji', system-ui;
+ }
+ 
+ @layer utilities {
+   @font-face {
+-    font-family: 'NotoEmoji';
+-    src: url('/src/assets/fonts/NotoColorEmoji-flagsonly.ttf') format('truetype');
+-  }
+-}
+-
+-@layer utilities {
+-  @font-face {
+     font-family: 'Twemoji';
++    font-display: swap;
+     src: url('/src/assets/fonts/TwemojiMozilla-flags.woff2') format('woff2');
+   }
+ }
+--- a/src/assets/styles/theme/presets.css
++++ b/src/assets/styles/theme/presets.css
+@@ -1,57 +1,3 @@
+-/*
+- * 主题预设：每个 daisyUI 主题的完整调色板。
+- * 跨主题共享的令牌放 tokens.css，不要在这里逐个主题重复。
+- */
+-
+-@plugin 'daisyui/theme' {
+-  name: 'light-monet';
+-  --color-primary: var(--primary, oklch(49.12% 0.3096 275.75));
+-  --color-primary-content: var(--onPrimary, #d4dbff);
+-  --color-secondary: var(--secondary, oklch(69.71% 0.329 342.55));
+-  --color-secondary-content: var(--onSecondary, oklch(98.71% 0.0106 342.55));
+-  --color-accent: var(--tertiary, oklch(76.76% 0.184 183.61));
+-  --color-accent-content: var(--onTertiary, #00100d);
+-  --color-neutral: var(--surface, #2b3440);
+-  --color-neutral-content: var(--onSurface, #d7dde4);
+-  --color-base-100: oklch(100% 0 0);
+-  --color-base-200: #f2f2f2;
+-  --color-base-300: #e5e6e6;
+-  --color-base-content: #1f2937;
+-  --radius-selector: 1rem;
+-  --radius-field: 0.5rem;
+-  --radius-box: 1rem;
+-  --size-selector: 0.25rem;
+-  --size-field: 0.25rem;
+-  --border: 1px;
+-  --depth: 0;
+-  --noise: 0;
+-}
+-
+-@plugin 'daisyui/theme' {
+-  name: 'dark-monet';
+-  --color-primary: var(--primary, oklch(65.69% 0.196 275.75));
+-  --color-primary-content: var(--onPrimary, #050617);
+-  --color-secondary: var(--secondary, oklch(74.8% 0.26 342.55));
+-  --color-secondary-content: var(--onSecondary, #190211);
+-  --color-accent: var(--tertiary, oklch(74.51% 0.167 183.61));
+-  --color-accent-content: var(--onTertiary, #000e0c);
+-  --color-neutral: var(--surface, #2a323c);
+-  --color-neutral-content: var(--onSurface, #a6adbb);
+-  --color-base-100: #1d232a;
+-  --color-base-200: #191e24;
+-  --color-base-300: #15191e;
+-  --color-base-content: #a6adbb;
+-  --radius-selector: 1rem;
+-  --radius-field: 0.5rem;
+-  --radius-box: 1rem;
+-  --size-selector: 0.25rem;
+-  --size-field: 0.25rem;
+-  --border: 1px;
+-  --depth: 0;
+-  --noise: 0;
+-  color-scheme: dark;
+-}
+-
+ @plugin 'daisyui/theme' {
+   name: 'light';
+   --color-primary: #1d1d1f;
+@@ -116,101 +62,3 @@
+   --noise: 0;
+   color-scheme: dark;
+ }
+-
+-@plugin 'daisyui/theme' {
+-  name: 'light-neutral';
+-  --color-primary: #44403c;
+-  --color-primary-content: #faf9f7;
+-  --color-secondary: #78716c;
+-  --color-secondary-content: #faf9f7;
+-  --color-accent: #57534e;
+-  --color-accent-content: #faf9f7;
+-  --color-neutral: #44403c;
+-  --color-neutral-content: #f5f4f1;
+-  --color-base-100: #fdfcfa;
+-  --color-base-200: #f4f2f1;
+-  --color-base-300: #d9d5cd;
+-  --color-base-content: #2b2926;
+-  --color-info: #64748b;
+-  --color-info-content: #ffffff;
+-  --color-success: #6e8b78;
+-  --color-success-content: #ffffff;
+-  --color-warning: #b39468;
+-  --color-warning-content: #ffffff;
+-  --color-error: #a86b66;
+-  --color-error-content: #ffffff;
+-  --radius-selector: 0.625rem;
+-  --radius-field: 0.5rem;
+-  --radius-box: 0.75rem;
+-  --size-selector: 0.25rem;
+-  --size-field: 0.25rem;
+-  --border: 1px;
+-  --depth: 0;
+-  --noise: 0;
+-}
+-
+-@plugin 'daisyui/theme' {
+-  name: 'dark-neutral';
+-  --color-primary: #6c6c70;
+-  --color-primary-content: #fafafa;
+-  --color-secondary: #57575c;
+-  --color-secondary-content: #fafafa;
+-  --color-accent: #45454a;
+-  --color-accent-content: #fafafa;
+-  --color-neutral: #6c6c6c;
+-  --color-neutral-content: #fafafa;
+-  --color-base-100: #262626;
+-  --color-base-200: #1a1a1a;
+-  --color-base-300: #404040;
+-  --color-base-content: #e5e5e5;
+-  --color-info: #94a3b8;
+-  --color-info-content: #1c1c1e;
+-  --color-success: oklch(0.561 0.18 167);
+-  --color-success-content: #1c1c1e;
+-  --color-warning: oklch(0.72 0.14 85);
+-  --color-warning-content: #1c1c1e;
+-  --color-error: oklch(0.56 0.17 22);
+-  --color-error-content: #1c1c1e;
+-  --radius-selector: 0.625rem;
+-  --radius-field: 0.5rem;
+-  --radius-box: 0.75rem;
+-  --size-selector: 0.25rem;
+-  --size-field: 0.25rem;
+-  --border: 1px;
+-  --depth: 0;
+-  --noise: 0;
+-  color-scheme: dark;
+-}
+-
+-@plugin 'daisyui/theme' {
+-  name: 'dark-daisyui5';
+-  color-scheme: dark;
+-  --color-base-100: oklch(25.33% 0.016 252.42);
+-  --color-base-200: oklch(23.26% 0.014 253.1);
+-  --color-base-300: oklch(21.15% 0.012 254.09);
+-  --color-base-content: oklch(97.807% 0.029 256.847);
+-  --color-primary: oklch(58% 0.233 277.117);
+-  --color-primary-content: oklch(96% 0.018 272.314);
+-  --color-secondary: oklch(65% 0.241 354.308);
+-  --color-secondary-content: oklch(94% 0.028 342.258);
+-  --color-accent: oklch(77% 0.152 181.912);
+-  --color-accent-content: oklch(38% 0.063 188.416);
+-  --color-neutral: oklch(14% 0.005 285.823);
+-  --color-neutral-content: oklch(92% 0.004 286.32);
+-  --color-info: oklch(74% 0.16 232.661);
+-  --color-info-content: oklch(29% 0.066 243.157);
+-  --color-success: oklch(76% 0.177 163.223);
+-  --color-success-content: oklch(37% 0.077 168.94);
+-  --color-warning: oklch(82% 0.189 84.429);
+-  --color-warning-content: oklch(41% 0.112 45.904);
+-  --color-error: oklch(71% 0.194 13.428);
+-  --color-error-content: oklch(27% 0.105 12.094);
+-  --radius-selector: 0.5rem;
+-  --radius-field: 0.25rem;
+-  --radius-box: 0.5rem;
+-  --size-selector: 0.25rem;
+-  --size-field: 0.25rem;
+-  --border: 1px;
+-  --depth: 1;
+-  --noise: 0;
+-}
+--- a/src/assets/styles/theme/setup.css
++++ b/src/assets/styles/theme/setup.css
+@@ -6,6 +6,10 @@
+ @config '../../../../tailwind.config.ts';
+ 
+ @plugin 'daisyui' {
+-  themes: all;
+-  exclude: rootscrollgutter;
++  themes:
++    light --default,
++    dark --prefersdark;
++  exclude:
++    rootscrollgutter, calendar, carousel, chat, countdown, diff, dock, drawer, fab, footer, hero,
++    hover3d, hovergallery, megamenu, mockup, otp, rating, steps, textrotate, timeline;
+ }
+--- a/src/assets/styles/theme/tokens.css
++++ b/src/assets/styles/theme/tokens.css
+@@ -16,15 +16,6 @@
+   --radius-selector: 0.5rem;
+ }
+ 
+-/* 中性主题下延迟色也要去彩，避免和低饱和配色打架 */
+-[data-theme='light-neutral'],
+-[data-theme='dark-neutral'] {
+-  --color-low-latency: oklch(0.551 0.08 167);
+-  --color-medium-latency: oklch(0.72 0.14 85);
+-  --color-high-latency: oklch(0.56 0.17 22);
+-  --color-backend-online: oklch(0.62 0.045 167);
+-}
+-
+ /* 暴露给 Tailwind，使 bg-base-150 / border-base-border 这类工具类可用 */
+ @theme inline {
+   --color-base-150: var(--color-base-150);
+--- a/src/components/common/CtrlsBar.vue
++++ b/src/components/common/CtrlsBar.vue
+@@ -1,34 +1,11 @@
+ <template>
+   <div
+-    class="bg-base-100 fixed top-0 right-0 left-0 z-30 shadow-xs backdrop-blur-xl"
+-    :class="[isMiddleScreen ? 'fixed' : 'sticky', { 'md:bg-base-100/50': !solid }]"
+-    ref="ctrlsBarRef"
++    class="bg-base-100 sticky top-0 z-30 shadow-xs"
++    :class="{ 'md:bg-base-100/50': !solid }"
+   >
+-    <slot></slot>
++    <slot />
+   </div>
+ </template>
+-<script lang="ts" setup>
+-import { ctrlsBottom } from '@/composables/paddingViews'
+-import { isMiddleScreen } from '@/helper/utils'
+-import { useElementBounding } from '@vueuse/core'
+-import { onUnmounted, ref, watch } from 'vue'
+-
+-defineProps<{
+-  solid?: boolean
+-}>()
+-
+-const ctrlsBarRef = ref<HTMLDivElement | null>(null)
+-const { bottom: ctrlsBarBottom } = useElementBounding(ctrlsBarRef)
+-
+-watch(
+-  ctrlsBarBottom,
+-  () => {
+-    ctrlsBottom.value = ctrlsBarBottom.value
+-  },
+-  { immediate: true },
+-)
+-
+-onUnmounted(() => {
+-  ctrlsBottom.value = 0
+-})
++<script setup lang="ts">
++defineProps<{ solid?: boolean }>()
+ </script>
+--- a/src/components/common/VirtualScroller.vue
++++ b/src/components/common/VirtualScroller.vue
+@@ -41,7 +41,7 @@
+     <div
+       v-else
+       class="base-container m-3 flex-row p-3 text-sm"
+-      :style="{ marginTop: `${paddingTop + 12}px`, marginBottom: `${paddingBottom}px` }"
++      style="margin-top: 12px; margin-bottom: 0"
+     >
+       {{ $t('noData') }}
+     </div>
+@@ -49,14 +49,9 @@
+ </template>
+ 
+ <script setup lang="ts">
+-import { usePaddingForViews } from '@/composables/paddingViews'
+ import { useVirtualizer } from '@tanstack/vue-virtual'
+ import { computed, nextTick, ref } from 'vue'
+ 
+-const { paddingTop, paddingBottom } = usePaddingForViews({
+-  offsetTop: 0,
+-  offsetBottom: 0,
+-})
+ const parentRef = ref<HTMLElement | null>(null)
+ const props = withDefaults(
+   defineProps<{
+@@ -80,8 +75,8 @@
+     getScrollElement: () => parentRef.value,
+     estimateSize: () => props.size,
+     overscan: props.overscan,
+-    paddingStart: paddingTop.value,
+-    paddingEnd: paddingBottom.value + 24,
++    paddingStart: 0,
++    paddingEnd: 24,
+   }
+ })
+ 
+--- a/src/components/connections/ConnectionCard.tsx
++++ b/src/components/connections/ConnectionCard.tsx
+@@ -1,8 +1,4 @@
+-import {
+-  blockConnectionByIdAPI,
+-  disconnectByIdAPI,
+-  getConnectionDisplayValue,
+-} from '@/assembly/connections'
++import { disconnectByIdAPI, getConnectionDisplayValue } from '@/assembly/connections'
+ import { useBounceOnVisible } from '@/composables/bouncein'
+ import { useConnections } from '@/composables/connections'
+ import {
+@@ -10,7 +6,7 @@
+   CONNECTIONS_TABLE_ACCESSOR_KEY,
+   PROXY_CHAIN_DIRECTION,
+ } from '@/constant'
+-import { getConnectionChains, getConnectionSmartBlock } from '@/helper'
++import { getConnectionChains } from '@/helper'
+ import { notifyRequestError } from '@/helper/requestError'
+ import { connectionFilter, connectionTabShow, isClosedConnection } from '@/store/connections'
+ import { connectionCardLines, proxyChainDirection, showFullProxyChain } from '@/store/settings'
+@@ -21,7 +17,6 @@
+   ArrowRightCircleIcon,
+   ArrowUpCircleIcon,
+   ArrowUpIcon,
+-  NoSymbolIcon,
+   XMarkIcon,
+ } from '@heroicons/vue/24/outline'
+ import { first, last } from 'lodash'
+@@ -206,25 +201,6 @@
+             </button>
+           )
+ 
+-          if (getConnectionSmartBlock(conn) === 'normal') {
+-            const degradeButton = (
+-              <button
+-                class="btn btn-circle btn-xs"
+-                onClick={(e) => {
+-                  e.stopPropagation()
+-                  blockConnectionByIdAPI(conn.id).catch(notifyRequestError)
+-                }}
+-              >
+-                <NoSymbolIcon class="h-4 w-4" />
+-              </button>
+-            )
+-            return (
+-              <div class="flex gap-1">
+-                {degradeButton}
+-                {closeButton}
+-              </div>
+-            )
+-          }
+           return closeButton
+         },
+       }
+--- a/src/components/connections/ConnectionTable.vue
++++ b/src/components/connections/ConnectionTable.vue
+@@ -213,11 +213,7 @@
+ </template>
+ 
+ <script setup lang="ts">
+-import {
+-  blockConnectionByIdAPI,
+-  disconnectByIdAPI,
+-  getConnectionDisplayValue,
+-} from '@/assembly/connections'
++import { disconnectByIdAPI, getConnectionDisplayValue } from '@/assembly/connections'
+ import { useConnections } from '@/composables/connections'
+ import {
+   CONNECTION_TAB_TYPE,
+@@ -229,7 +225,6 @@
+ import {
+   getConnectionChains,
+   getConnectionDownload,
+-  getConnectionSmartBlock,
+   getConnectionStart,
+   getConnectionUpload,
+ } from '@/helper'
+@@ -259,7 +254,6 @@
+   MagnifyingGlassMinusIcon,
+   MagnifyingGlassPlusIcon,
+   MapPinIcon,
+-  NoSymbolIcon,
+   XMarkIcon,
+ } from '@heroicons/vue/24/outline'
+ import {
+@@ -354,28 +348,6 @@
+         ],
+       )
+ 
+-      if (getConnectionSmartBlock(row.original) === 'normal') {
+-        const degradeButton = h(
+-          'button',
+-          {
+-            class: 'btn btn-xs btn-circle',
+-            onClick: (e) => {
+-              const connection = row.original
+-
+-              e.stopPropagation()
+-              blockConnectionByIdAPI(connection.id).catch(notifyRequestError)
+-            },
+-          },
+-          [
+-            h(NoSymbolIcon, {
+-              class: 'h-4 w-4',
+-            }),
+-          ],
+-        )
+-
+-        return h('div', { class: 'flex gap-1' }, [closeButton, degradeButton])
+-      }
+-
+       return closeButton
+     },
+   },
+--- a/src/components/controls/ConnectionCtrl.tsx
++++ b/src/components/controls/ConnectionCtrl.tsx
+@@ -1,6 +1,6 @@
+ import { disconnectAllAPI, disconnectByIdAPI } from '@/assembly/connections'
+ import { useCtrlsBar } from '@/composables/useCtrlsBar'
+-import { ROUTE_NAME, SETTINGS_MENU_KEY, SORT_DIRECTION, SORT_TYPE } from '@/constant'
++import { SORT_DIRECTION, SORT_TYPE } from '@/constant'
+ import { useTooltip } from '@/helper/tooltip'
+ import {
+   connectionFilter,
+@@ -26,7 +26,6 @@
+ } from '@heroicons/vue/24/outline'
+ import { defineComponent, ref } from 'vue'
+ import { useI18n } from 'vue-i18n'
+-import { useRouter } from 'vue-router'
+ import CtrlsBar from '../common/CtrlsBar.vue'
+ import DialogWrapper from '../common/DialogWrapper.vue'
+ import SelectInput from '../common/SelectInput.vue'
+@@ -55,7 +54,6 @@
+   },
+   setup() {
+     const { t } = useI18n()
+-    const router = useRouter()
+     const settingsModel = ref(false)
+     const { showTip, updateTip } = useTooltip()
+     const { isLargeCtrlsBar } = useCtrlsBar(() => (isConnectionCard.value ? 860 : 720))
+@@ -132,18 +130,6 @@
+                 </div>
+                 {isConnectionCard.value ? <ConnectionCardSettings /> : <TableSettings />}
+               </div>
+-              <button
+-                class="btn btn-block"
+-                onClick={() => {
+-                  settingsModel.value = false
+-                  router.push({
+-                    name: ROUTE_NAME.settings,
+-                    query: { section: SETTINGS_MENU_KEY.connections },
+-                  })
+-                }}
+-              >
+-                {t('moreSettings')}
+-              </button>
+             </div>
+           </DialogWrapper>
+         </>
+--- a/src/components/controls/ProxiesCtrl.tsx
++++ b/src/components/controls/ProxiesCtrl.tsx
+@@ -3,18 +3,14 @@
+ import { disconnectByIdAPI } from '@/assembly/connections'
+ import {
+   allProxiesLatencyTest,
+-  fetchProxies,
+   hasSmartGroup,
+   proxiesFilter,
+   proxiesTabShow,
+-  proxyGroupList,
+-  proxyProviederList,
+-  updateProxyProviderAPI,
+ } from '@/assembly/proxies'
+ import { renderProxiesPageItems } from '@/composables/proxies'
+ import { isProxyNodeSearchMode, toggleProxySearchMode } from '@/composables/proxySearch'
+ import { useCtrlsBar } from '@/composables/useCtrlsBar'
+-import { PROXY_SORT_TYPE, PROXY_TAB_TYPE, ROUTE_NAME, SETTINGS_MENU_KEY } from '@/constant'
++import { PROXY_SORT_TYPE, PROXY_TAB_TYPE } from '@/constant'
+ import { getMinCardWidth } from '@/helper/utils'
+ import { activeConnections } from '@/store/connections'
+ import { isProxyFolderModeActive } from '@/store/proxyFolders'
+@@ -33,7 +29,6 @@
+   useSmartGroupSort,
+ } from '@/store/settings'
+ import {
+-  ArrowPathIcon,
+   BoltIcon,
+   ChevronDownIcon,
+   ChevronUpIcon,
+@@ -44,10 +39,8 @@
+ import { every } from 'lodash'
+ import { computed, defineComponent, ref } from 'vue'
+ import { useI18n } from 'vue-i18n'
+-import { useRouter } from 'vue-router'
+ import CtrlsBar from '../common/CtrlsBar.vue'
+ import DialogWrapper from '../common/DialogWrapper.vue'
+-import SegmentedControl from '../common/SegmentedControl.vue'
+ import SelectInput from '../common/SelectInput.vue'
+ import TextInput from '../common/TextInput.vue'
+ 
+@@ -55,30 +48,9 @@
+   name: 'ProxiesCtrl',
+   setup() {
+     const { t } = useI18n()
+-    const router = useRouter()
+-    const isUpgrading = ref(false)
+     const isAllLatencyTesting = ref(false)
+     const settingsModel = ref(false)
+     const { isLargeCtrlsBar } = useCtrlsBar()
+-    const handlerClickUpdateAllProviders = async () => {
+-      if (isUpgrading.value) return
+-      isUpgrading.value = true
+-      try {
+-        await Promise.all(
+-          proxyProviederList.value.map((provider) => updateProxyProviderAPI(provider.name)),
+-        )
+-        await fetchProxies()
+-        isUpgrading.value = false
+-      } catch {
+-        await fetchProxies()
+-        isUpgrading.value = false
+-      }
+-    }
+-
+-    const hasProviders = computed(() => {
+-      return proxyProviederList.value.length > 0
+-    })
+-
+     const foldersUiVisible = computed(
+       () => isProxyFolderModeActive.value && proxiesTabShow.value === PROXY_TAB_TYPE.PROXIES,
+     )
+@@ -127,37 +99,7 @@
+       minProxyCardWidth.value = getMinCardWidth(proxyCardSize.value)
+     }
+ 
+-    const tabsWithNumbers = computed(() => {
+-      return Object.values(PROXY_TAB_TYPE).map((type) => {
+-        return {
+-          type,
+-          count:
+-            type === PROXY_TAB_TYPE.PROXIES
+-              ? proxyGroupList.value.length
+-              : proxyProviederList.value.length,
+-        }
+-      })
+-    })
+     return () => {
+-      const tabs = (
+-        <SegmentedControl
+-          modelValue={proxiesTabShow.value}
+-          onUpdate:modelValue={(value) => (proxiesTabShow.value = value as PROXY_TAB_TYPE)}
+-          options={tabsWithNumbers.value.map(({ type, count }) => ({
+-            value: type,
+-            label: t(type),
+-            count,
+-          }))}
+-        />
+-      )
+-      const upgradeAllIcon = proxiesTabShow.value === PROXY_TAB_TYPE.PROVIDER && (
+-        <button
+-          class="btn btn-circle btn-sm"
+-          onClick={handlerClickUpdateAllProviders}
+-        >
+-          <ArrowPathIcon class={['h-4 w-4', isUpgrading.value && 'animate-spin']} />
+-        </button>
+-      )
+       const modeSelect = configs.value && (
+         <SelectInput
+           class={['select select-sm', isLargeCtrlsBar.value ? 'min-w-40' : 'min-w-24']}
+@@ -333,18 +275,6 @@
+                   </div>
+                 </div>
+               </div>
+-              <button
+-                class="btn btn-block"
+-                onClick={() => {
+-                  settingsModel.value = false
+-                  router.push({
+-                    name: ROUTE_NAME.settings,
+-                    query: { section: SETTINGS_MENU_KEY.proxies },
+-                  })
+-                }}
+-              >
+-                {t('moreSettings')}
+-              </button>
+             </div>
+           </DialogWrapper>
+         </>
+@@ -352,12 +282,6 @@
+ 
+       const content = !isLargeCtrlsBar.value ? (
+         <div class="flex flex-col gap-2 p-2">
+-          {hasProviders.value && (
+-            <div class="flex gap-2">
+-              {tabs}
+-              {upgradeAllIcon}
+-            </div>
+-          )}
+           <div class="flex w-full gap-2">
+             {modeSelect}
+             {searchInput}
+@@ -368,10 +292,8 @@
+         </div>
+       ) : (
+         <div class="flex gap-2 p-2">
+-          {hasProviders.value && tabs}
+           {modeSelect}
+           <div class="flex flex-1">{searchInput}</div>
+-          {upgradeAllIcon}
+           {settingsModal}
+           {toggleCollapseAll}
+           {latencyTestAll}
+--- a/src/components/controls/SourceIPFilter.vue
++++ b/src/components/controls/SourceIPFilter.vue
+@@ -9,10 +9,8 @@
+ <script setup lang="ts">
+ import { getConnectionSourceIP } from '@/helper'
+ import SelectInput from '@/components/common/SelectInput.vue'
+-import { reverseDNSRevision } from '@/helper/reverseDns'
+ import { getIPLabelFromMap } from '@/helper/sourceip'
+ import { connections, sourceIPFilter } from '@/store/connections'
+-import { resolveClientHostname } from '@/store/settings'
+ import { activeUuid } from '@/store/setup'
+ import * as ipaddr from 'ipaddr.js'
+ import { isEqual, uniq } from 'lodash'
+@@ -48,7 +46,7 @@
+ 
+ // do not use computed here for firefox
+ watch(
+-  [sourceIPsKey, reverseDNSRevision, resolveClientHostname, activeUuid],
++  [sourceIPsKey, activeUuid],
+   () => {
+     const options: { label: string; value: string[] }[] = []
+ 
+--- a/src/components/overview/OverviewCardSettingsDialog.vue
++++ b/src/components/overview/OverviewCardSettingsDialog.vue
+@@ -45,7 +45,6 @@
+   NetworkCard: 'networkCard',
+   ProviderTrafficOverview: 'providerTrafficOverview',
+   TopologyCharts: 'topologyCharts',
+-  EarthGlobeCard: 'earthGlobeCard',
+   ConnectionHistory: 'connectionHistory',
+   RuleHitCountCard: 'ruleHitCountCard',
+ }
+--- a/src/components/settings/backend/BackendForm.vue
++++ b/src/components/settings/backend/BackendForm.vue
+@@ -11,17 +11,7 @@
+ -->
+ <template>
+   <div class="flex flex-col gap-3">
+-    <div class="flex flex-col gap-1">
+-      <label class="text-sm">{{ $t('backendType') }}</label>
+-      <SelectInput
+-        class="select select-sm w-full"
+-        v-model="model.type"
+-        :options="[
+-          { value: 'clash', label: $t('clashApi') },
+-          { value: 'singbox', label: $t('singboxApi') },
+-        ]"
+-      />
+-    </div>
++    <p class="text-sm">{{ $t('singboxApi') }}</p>
+ 
+     <div class="flex gap-2">
+       <div class="flex w-24 flex-none flex-col gap-1">
+@@ -55,24 +45,6 @@
+       </div>
+     </div>
+ 
+-    <div
+-      v-if="model.type === 'clash'"
+-      class="flex flex-col gap-1"
+-    >
+-      <label class="flex items-center gap-1 text-sm">
+-        <span>{{ $t('secondaryPath') }} ({{ $t('optional') }})</span>
+-        <span
+-          class="tooltip flex-none"
+-          :data-tip="$t('secondaryPathTip')"
+-        >
+-          <QuestionMarkCircleIcon class="h-4 w-4" />
+-        </span>
+-      </label>
+-      <TextInput
+-        class="w-full"
+-        v-model="model.secondaryPath"
+-      />
+-    </div>
+     <div class="flex flex-col gap-1">
+       <label class="text-sm">{{ $t('label') }}</label>
+       <TextInput
+@@ -97,7 +69,6 @@
+ import TextInput from '@/components/common/TextInput.vue'
+ import SelectInput from '@/components/common/SelectInput.vue'
+ import type { Backend } from '@/types'
+-import { QuestionMarkCircleIcon } from '@heroicons/vue/24/outline'
+ 
+ const model = defineModel<Omit<Backend, 'uuid'>>({ required: true })
+ </script>
+--- a/src/components/settings/backend/BackendManager.vue
++++ b/src/components/settings/backend/BackendManager.vue
+@@ -199,7 +199,7 @@
+ const { stateOf } = useBackendListProbe(isListVisible)
+ 
+ const emptyForm = (): Omit<Backend, 'uuid'> => ({
+-  type: 'clash' as BackendType,
++  type: 'singbox' as BackendType,
+   protocol: 'http',
+   host: '127.0.0.1',
+   port: '9090',
+--- a/src/components/settings/general/LanguageSelect.vue
++++ b/src/components/settings/general/LanguageSelect.vue
+@@ -1,32 +1,16 @@
+-<template>
+-  <SettingItem :setting-key="GENERAL_ITEM_KEYS.language">
+-    <div class="setting-item-label">
+-      {{ $t('language') }}
+-    </div>
+-    <SelectInput
+-      class="select select-sm w-48"
+-      v-model="language"
+-      :options="
+-        Object.values(LANG).map((value) => ({ value, label: langLabelMap[value] || value }))
+-      "
+-      @change="locale = language"
+-    />
+-  </SettingItem>
+-</template>
+-
+ <script setup lang="ts">
+-import SettingItem from '@/components/settings/SettingItem.vue'
+-import SelectInput from '@/components/common/SelectInput.vue'
+-import { GENERAL_ITEM_KEYS } from '@/config/settingsItems'
+-import { LANG } from '@/constant'
+ import { language } from '@/store/settings'
+ import { useI18n } from 'vue-i18n'
+-
+ const { locale } = useI18n()
+-const langLabelMap = {
+-  [LANG.EN_US]: 'English',
+-  [LANG.ZH_CN]: '简体中文',
+-  [LANG.ZH_TW]: '繁體中文',
+-  [LANG.RU_RU]: 'Русский',
+-}
+ </script>
++<template>
++  <select
++    v-model="language"
++    class="select select-sm w-28"
++    :aria-label="$t('language')"
++    @change="locale = language"
++  >
++    <option value="zh-CN">简体中文</option>
++    <option value="en-US">English</option>
++  </select>
++</template>
+--- a/src/constant/index.ts
++++ b/src/constant/index.ts
+@@ -17,8 +17,6 @@
+ export enum LANG {
+   EN_US = 'en-US',
+   ZH_CN = 'zh-CN',
+-  ZH_TW = 'zh-TW',
+-  RU_RU = 'ru-RU',
+ }
+ 
+ export enum FONTS {
+@@ -322,7 +320,6 @@
+   NetworkCard = 'NetworkCard',
+   ProviderTrafficOverview = 'ProviderTrafficOverview',
+   TopologyCharts = 'TopologyCharts',
+-  EarthGlobeCard = 'EarthGlobeCard',
+   ConnectionHistory = 'ConnectionHistory',
+   RuleHitCountCard = 'RuleHitCountCard',
+ }
+--- a/src/helper/index.ts
++++ b/src/helper/index.ts
+@@ -1,15 +1,8 @@
+-import { can } from '@/assembly/backend'
+ import { connectionAccessor } from '@/assembly/connections'
+ import { hiddenGroupMap, proxyMap } from '@/assembly/proxies'
+ import { NOT_CONNECTED, PROXY_CHAIN_DIRECTION, PROXY_TYPE, ROUTE_NAME } from '@/constant'
+ import { showNotification } from '@/helper/notification'
+-import {
+-  customThemes,
+-  lowLatency,
+-  mediumLatency,
+-  proxyChainDirection,
+-  splitOverviewPage,
+-} from '@/store/settings'
++import { customThemes, lowLatency, mediumLatency, proxyChainDirection } from '@/store/settings'
+ import type { Connection } from '@/types'
+ import * as ipaddr from 'ipaddr.js'
+ import { computed } from 'vue'
+@@ -112,19 +105,12 @@
+   }
+ }
+ 
+-export const renderRoutes = computed(() => {
+-  // capability gate per route; routes not listed here are always shown
+-  const routeCapable: Partial<Record<ROUTE_NAME, boolean>> = {
+-    [ROUTE_NAME.rules]: can('rules'),
+-    [ROUTE_NAME.tools]: can('tools'),
+-  }
+-  return Object.values(ROUTE_NAME).filter((r) => {
+-    if (r === ROUTE_NAME.setup) return false
+-    if (!splitOverviewPage.value && r === ROUTE_NAME.overview) return false
+-    if (r in routeCapable && routeCapable[r] === false) return false
+-    return true
+-  })
+-})
++export const renderRoutes = computed(() => [
++  ROUTE_NAME.overview,
++  ROUTE_NAME.proxies,
++  ROUTE_NAME.connections,
++  ROUTE_NAME.logs,
++])
+ 
+ export const applyCustomThemes = () => {
+   document.querySelectorAll('.custom-theme').forEach((style) => {
+--- a/src/helper/sourceip.ts
++++ b/src/helper/sourceip.ts
+@@ -1,4 +1,3 @@
+-import { getReverseDNSHostname } from '@/helper/reverseDns'
+ import { sourceIPLabelList } from '@/store/settings'
+ import { activeBackend } from '@/store/setup'
+ import * as ipaddr from 'ipaddr.js'
+@@ -103,5 +102,5 @@
+   const manualLabel = getManualIPLabel(ip)
+   if (manualLabel !== null) return manualLabel
+ 
+-  return getReverseDNSHostname(ip) ?? ip
++  return ip
+ }
+--- a/src/helper/utils.ts
++++ b/src/helper/utils.ts
+@@ -156,10 +156,10 @@
+     window.location.search || location.hash.match(/\?.*$/)?.[0]?.replace('?', ''),
+   )
+ 
+-  if (query.has('hostname')) {
++  if (query.has('hostname') && (!query.has('type') || query.get('type') === 'singbox')) {
+     return {
+-      // 后端类型:'singbox' 走 sing-box API(gRPC),其余(含缺省)按 'clash' 处理。
+-      type: (query.get('type') === 'singbox' ? 'singbox' : 'clash') as BackendType,
++      // Only native sing-box API endpoints are accepted.
++      type: 'singbox' as BackendType,
+       protocol: getProtocolFromQuery(query),
+       secondaryPath: query.get('secondaryPath') || '',
+       host: query.get('hostname') as string,
+--- a/src/i18n/index.ts
++++ b/src/i18n/index.ts
+@@ -2,9 +2,7 @@
+ import { language } from '@/store/settings'
+ import { createI18n } from 'vue-i18n'
+ import en from './en'
+-import ru from './ru'
+ import zh from './zh'
+-import zhTW from './zh-tw'
+ 
+ export const i18n = createI18n({
+   legacy: false,
+@@ -13,7 +11,5 @@
+   messages: {
+     [LANG.EN_US]: en,
+     [LANG.ZH_CN]: zh,
+-    [LANG.ZH_TW]: zhTW,
+-    [LANG.RU_RU]: ru,
+   },
+ })
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -1,12 +1,9 @@
+-import '@/api/http'
+ import '@/helper/dayjs'
+ import 'tippy.js/animations/scale.css'
+ import 'tippy.js/dist/tippy.css'
+ import { createApp } from 'vue'
+ import App from './App.vue'
+-import { loadFonts } from './assets/load-fonts'
+ import './assets/main.css'
+-import { applyCustomThemes, applyKsuTheme } from './helper'
+ import { i18n } from './i18n'
+ import router from './router'
+ 
+@@ -20,10 +17,6 @@
+   }
+ }
+ 
+-applyCustomThemes()
+-applyKsuTheme()
+-loadFonts()
+-
+ const app = createApp(App)
+ 
+ app.use(router)
+--- a/src/router/index.ts
++++ b/src/router/index.ts
+@@ -1,7 +1,5 @@
+-import { can, type Cap } from '@/assembly/backend'
+ import { resolvePageTransition } from '@/composables/pageTransition'
+ import { ROUTE_NAME } from '@/constant'
+-import { renderRoutes } from '@/helper'
+ import { i18n } from '@/i18n'
+ import { language } from '@/store/settings'
+ import { activeBackend } from '@/store/setup'
+@@ -10,8 +8,6 @@
+ import LogsPage from '@/views/LogsPage.vue'
+ import OverviewPage from '@/views/OverviewPage.vue'
+ import ProxiesPage from '@/views/ProxiesPage.vue'
+-import RulesPage from '@/views/RulesPage.vue'
+-import SettingsPage from '@/views/SettingsPage.vue'
+ import SetupPage from '@/views/SetupPage.vue'
+ import { useTitle } from '@vueuse/core'
+ import { watch } from 'vue'
+@@ -38,35 +34,14 @@
+     name: ROUTE_NAME.logs,
+     component: LogsPage,
+   },
+-  {
+-    path: 'rules',
+-    name: ROUTE_NAME.rules,
+-    component: RulesPage,
+-  },
+-  {
+-    path: 'tools',
+-    name: ROUTE_NAME.tools,
+-    component: () => import('@/views/ToolsPage.vue'),
+-  },
+-  {
+-    path: 'settings',
+-    name: ROUTE_NAME.settings,
+-    component: SettingsPage,
+-  },
+ ]
+-
+-// Routes that require a specific capability to be visitable.
+-const ROUTE_CAPABILITY: Partial<Record<string, Cap>> = {
+-  [ROUTE_NAME.rules]: 'rules',
+-  [ROUTE_NAME.tools]: 'tools',
+-}
+ 
+ const router = createRouter({
+   history: createWebHashHistory(import.meta.env.BASE_URL),
+   routes: [
+     {
+       path: '/',
+-      redirect: ROUTE_NAME.proxies,
++      redirect: ROUTE_NAME.overview,
+       component: HomePage,
+       children: childrenRouter,
+     },
+@@ -77,7 +52,7 @@
+     },
+     {
+       path: '/:catchAll(.*)',
+-      redirect: ROUTE_NAME.proxies,
++      redirect: ROUTE_NAME.overview,
+     },
+   ],
+ })
+@@ -97,14 +72,7 @@
+   resolvePageTransition(to, from)
+ 
+   if (!activeBackend.value && to.name !== ROUTE_NAME.setup) {
+-    router.push({ name: ROUTE_NAME.setup })
+-    return
+-  }
+-
+-  // Block navigation to a page the active backend's channels can't serve.
+-  const requiredCap = typeof to.name === 'string' ? ROUTE_CAPABILITY[to.name] : undefined
+-  if (requiredCap && !can(requiredCap)) {
+-    router.push({ name: ROUTE_NAME.proxies })
++    return { name: ROUTE_NAME.setup }
+   }
+ })
+ 
+@@ -118,13 +86,4 @@
+   })
+ })
+ 
+-// 能力变化(切后端 / 内核探测出结果)后,把停留在已失效页面的用户送回代理页。
+-watch(renderRoutes, () => {
+-  const routeName = router.currentRoute.value.name
+-  const requiredCap = typeof routeName === 'string' ? ROUTE_CAPABILITY[routeName] : undefined
+-  if (requiredCap && !can(requiredCap)) {
+-    router.push({ name: ROUTE_NAME.proxies })
+-  }
+-})
+-
+ export default router
+--- a/src/store/settings.ts
++++ b/src/store/settings.ts
+@@ -1,6 +1,5 @@
+ import { DEFAULT_SETTINGS_MENU_ORDER } from '@/config/settingsItems'
+ import {
+-  ALL_THEME,
+   CONNECTION_DISPLAY_STYLE,
+   CONNECTIONS_TABLE_ACCESSOR_KEY,
+   DETAILED_CARD_STYLE,
+@@ -11,7 +10,6 @@
+   GEOIP_COUNTRY_DATABASE_URL,
+   GLOBAL,
+   IP_INFO_API,
+-  IS_APPLE_DEVICE,
+   LANG,
+   LIST_DISPLAY_STYLE,
+   OVERVIEW_CARD,
+@@ -125,23 +123,8 @@
+ })
+ export const customThemes = useStorage<THEME[]>('config/custom-themes', [])
+ 
+-const replaceLegacyTheme = (theme: string, defaultTheme: string) => {
+-  const legacyThemeReplacements: Record<string, string> = {
+-    'dark-apple': 'dark',
+-    lofi: 'light',
+-    wireframe: 'light',
+-    black: 'dark-neutral',
+-    business: 'dark-neutral',
+-  }
+-
+-  if (theme in legacyThemeReplacements) {
+-    return legacyThemeReplacements[theme]
+-  }
+-  if ([...ALL_THEME, ...customThemes.value.map((theme) => theme.name)].includes(theme)) {
+-    return theme
+-  }
+-  return defaultTheme
+-}
++const replaceLegacyTheme = (theme: string, fallback: string) =>
++  ['light', 'dark'].includes(theme) ? theme : fallback
+ 
+ // 仅在确实需要迁移时才写回,避免用户从未改过主题也被写入 storage
+ const migratedDefaultTheme = replaceLegacyTheme(defaultTheme.value, 'light')
+@@ -153,12 +136,12 @@
+   darkTheme.value = migratedDarkTheme
+ }
+ 
+-export const language = useStorage<LANG>(
+-  'config/language',
+-  Object.values(LANG).includes(navigator.language as LANG)
+-    ? (navigator.language as LANG)
+-    : LANG.EN_US,
+-)
++const normalizeLanguage = (value: string): LANG =>
++  value.toLowerCase().startsWith('zh') ? LANG.ZH_CN : LANG.EN_US
++export const language = useStorage<LANG>('config/language', normalizeLanguage(navigator.language))
++if (![LANG.ZH_CN, LANG.EN_US].includes(language.value)) {
++  language.value = normalizeLanguage(language.value)
++}
+ export const isSidebarCollapsedConfig = useStorage('config/is-sidebar-collapsed', true)
+ export const isSidebarCollapsed = computed({
+   get: () => {
+@@ -172,7 +155,7 @@
+     isSidebarCollapsedConfig.value = value
+   },
+ })
+-const fontConfig = useStorage<FONTS>('config/font', FONTS.MI_SANS)
++const fontConfig = useStorage<FONTS>('config/font', FONTS.SYSTEM_UI)
+ export const font = computed({
+   get: () => {
+     const mode = import.meta.env.MODE
+@@ -185,14 +168,14 @@
+     fontConfig.value = val
+   },
+ })
+-export const emoji = useStorage<EMOJIS>(
+-  'config/emoji',
+-  IS_APPLE_DEVICE ? EMOJIS.TWEMOJI : EMOJIS.NOTO_COLOR_EMOJI,
+-)
++export const emoji = useStorage<EMOJIS>('config/emoji', EMOJIS.TWEMOJI)
++emoji.value = EMOJIS.TWEMOJI
++fontConfig.value = FONTS.SYSTEM_UI
++
+ export const customBackgroundURL = useStorage('config/custom-background-image', '')
+ export const dashboardTransparent = useStorage('config/dashboard-transparent', 90)
+ export const autoUpgradeDashboard = useStorage('config/auto-upgrade', false)
+-export const checkUpgradeCore = useStorage('config/check-upgrade-core', true)
++export const checkUpgradeCore = useStorage('config/check-upgrade-core', false)
+ export const autoUpgradeCore = useStorage('config/auto-upgrade-core', false)
+ export const swipeInPages = useStorage('config/swipe-in-pages', true)
+ export const swipeInTabs = useStorage('config/swipe-in-tabs', false)
+@@ -217,7 +200,7 @@
+ export const keyboardShortcuts = useStorage<Record<string, string>>('config/keyboard-shortcuts', {})
+ 
+ // overview
+-export const splitOverviewPage = useStorage('config/split-overview-page', false)
++export const splitOverviewPage = useStorage('config/split-overview-page', true)
+ export const autoIPCheck = useStorage('config/auto-ip-check', true)
+ export const ipCheckPrimaryAPI = useStorage<IP_INFO_API>(
+   'config/ip-check-primary-api',
+@@ -246,10 +229,6 @@
+     visible: true,
+   },
+   {
+-    card: OVERVIEW_CARD.EarthGlobeCard,
+-    visible: true,
+-  },
+-  {
+     card: OVERVIEW_CARD.TopologyCharts,
+     visible: true,
+   },
+@@ -272,27 +251,14 @@
+   defaultOverviewCardOrder,
+ )
+ 
+-// 确保所有卡片都在配置中。存量配置首次补入全球连接时放在连接拓扑前；
+-// 其他缺失卡片仍追加到末尾，已有全球连接的自定义顺序不改。
+-const allCardTypes = Object.values(OVERVIEW_CARD)
+-const existingCardTypes = new Set(overviewCardOrder.value.map((item) => item.card))
+-const missingCards = allCardTypes.filter((card) => !existingCardTypes.has(card))
+-
+-if (missingCards.length > 0) {
+-  const nextOrder = [...overviewCardOrder.value]
+-
+-  for (const card of missingCards) {
+-    const item = { card, visible: true }
+-
+-    if (card === OVERVIEW_CARD.EarthGlobeCard) {
+-      const topologyIndex = nextOrder.findIndex(({ card }) => card === OVERVIEW_CARD.TopologyCharts)
+-      nextOrder.splice(topologyIndex === -1 ? nextOrder.length : topologyIndex, 0, item)
+-    } else {
+-      nextOrder.push(item)
+-    }
+-  }
+-
+-  overviewCardOrder.value = nextOrder
++// Keep saved order/visibility, discard removed cards, and append newly available cards.
++const allCardTypes = new Set(defaultOverviewCardOrder.map(({ card }) => card))
++const retainedCards = overviewCardOrder.value.filter(({ card }) => allCardTypes.has(card))
++const existingCardTypes = new Set(retainedCards.map(({ card }) => card))
++const missingCards = defaultOverviewCardOrder.filter(({ card }) => !existingCardTypes.has(card))
++
++if (retainedCards.length !== overviewCardOrder.value.length || missingCards.length > 0) {
++  overviewCardOrder.value = [...retainedCards, ...missingCards]
+ }
+ 
+ export const earthIPInfoAPI = useStorage<IP_INFO_API>('config/earth-ip-info-api', IP_INFO_API.IPIP)
+--- a/src/store/setup.ts
++++ b/src/store/setup.ts
+@@ -22,10 +22,7 @@
+     const channel = item.singboxChannel
+     const base = omit(item, 'singboxChannel') as Backend
+ 
+-    migrated.push({
+-      ...base,
+-      type: base.type ?? 'clash',
+-    })
++    if (base.type === 'singbox') migrated.push(base)
+ 
+     if (channel?.host) {
+       migrated.push({
+@@ -46,7 +43,7 @@
+ 
+ export const backendList = useStorage<Backend[]>('setup/api-list', [])
+ 
+-if (backendList.value.some((item) => !item.type || 'singboxChannel' in item)) {
++if (backendList.value.some((item) => item.type !== 'singbox' || 'singboxChannel' in item)) {
+   backendList.value = migrateBackendList(backendList.value as LegacyBackend[])
+ }
+ 
+--- a/src/store/smart.ts
++++ b/src/store/smart.ts
+@@ -1,57 +1,5 @@
+-import { fetchSmartGroupWeightsAPI, fetchSmartWeightsAPI } from '@/assembly/proxies'
+-import type { NodeRank } from '@/types'
+ import { ref } from 'vue'
+ 
++// Native sing-box does not expose Smart weights.
+ export const smartWeightsMap = ref<Record<string, Record<string, string>>>({})
+ export const smartOrderMap = ref<Record<string, Record<string, number>>>({})
+-
+-const restructWeights = (proxyName: string, weights: NodeRank[]) => {
+-  const smartWeights: Record<string, string> = {}
+-  const smartOrder: Record<string, number> = {}
+-
+-  weights.forEach((weight, index) => {
+-    smartWeights[weight.Name] = weight.Rank
+-    smartOrder[weight.Name] = index
+-  })
+-
+-  smartWeightsMap.value[proxyName] = smartWeights
+-  smartOrderMap.value[proxyName] = smartOrder
+-}
+-
+-// deprecated
+-const fetchSmartGroupWeights = async (proxyName: string) => {
+-  const { data } = await fetchSmartGroupWeightsAPI(proxyName)
+-
+-  if (!data.weights?.length) return
+-
+-  restructWeights(proxyName, data.weights)
+-}
+-
+-// 权重是拉取代理列表时顺带取的,不是用户点出来的,失败一律静默:
+-// 旧内核没有 /group/weights,回落到按组逐个拉。
+-export const initSmartWeights = async (smartGroups: string[]) => {
+-  let smartWeights: Record<string, NodeRank[]> | null = null
+-
+-  try {
+-    smartWeights = (await fetchSmartWeightsAPI()).data.weights
+-  } catch {
+-    smartWeights = null
+-  }
+-
+-  smartWeightsMap.value = {}
+-  smartOrderMap.value = {}
+-
+-  if (!smartWeights) {
+-    // deprecated fallback
+-    smartGroups.forEach((name) => {
+-      fetchSmartGroupWeights(name).catch(() => {})
+-    })
+-    return
+-  }
+-
+-  for (const [group, weights] of Object.entries(smartWeights)) {
+-    if (!weights?.length) continue
+-
+-    restructWeights(group, weights)
+-  }
+-}
+--- a/src/views/ConnectionsPage.vue
++++ b/src/views/ConnectionsPage.vue
+@@ -1,8 +1,5 @@
+ <template>
+-  <div
+-    class="relative flex size-full flex-col overflow-hidden"
+-    :style="!isConnectionCard && padding"
+-  >
++  <div class="relative flex size-full flex-col overflow-hidden">
+     <template v-if="isConnectionCard">
+       <ConnectionCardList />
+     </template>
+@@ -19,18 +16,13 @@
+ import ConnectionDetails from '@/components/connections/ConnectionDetails.vue'
+ import ConnectionTable from '@/components/connections/ConnectionTable.vue'
+ import ConnectionCtrl from '@/components/controls/ConnectionCtrl.tsx'
+-import { usePaddingForViews } from '@/composables/paddingViews'
+ import { isConnectionCard } from '@/store/settings'
+-const { padding } = usePaddingForViews({
+-  offsetTop: 0,
+-  offsetBottom: 0,
+-})
+ </script>
+ 
+ <style>
+ .vjs-tree {
+   font-family:
+-    NotoEmoji,
++    Twemoji,
+     Monaco,
+     Menlo,
+     Consolas,
+--- a/src/views/HomePage.vue
++++ b/src/views/HomePage.vue
+@@ -1,155 +1,52 @@
+-<template>
+-  <div
+-    class="home-page flex size-full"
+-    :class="sidebarLayoutCollapsed ? 'sidebar-collapsed' : 'sidebar-expanded'"
+-  >
+-    <div
+-      v-if="!isMiddleScreen"
+-      class="relative z-40 flex-none overflow-visible transition-none"
+-      :class="sidebarLayoutCollapsed ? 'w-18' : 'w-64'"
+-    >
+-      <SideBar
+-        class="absolute inset-y-0 left-0"
+-        @transitionend="syncSidebarLayoutState"
+-      />
+-    </div>
+-    <RouterView v-slot="{ Component, route }">
+-      <div
+-        class="relative flex-1 overflow-hidden"
+-        ref="swiperRef"
+-      >
+-        <div class="absolute flex h-full w-full flex-col overflow-y-auto">
+-          <Transition
+-            :name="pageTransitionName"
+-            :mode="pageTransitionMode"
+-          >
+-            <Component :is="Component" />
+-          </Transition>
+-        </div>
+-
+-        <template v-if="isMiddleScreen">
+-          <div
+-            class="bg-base-100/20 dock dock-xs z-10 h-14 w-auto"
+-            :style="{
+-              padding: '0',
+-              bottom: 'calc(var(--spacing) * 2 + env(safe-area-inset-bottom))',
+-            }"
+-            ref="dockRef"
+-          >
+-            <button
+-              v-for="r in renderRoutes"
+-              :key="r"
+-              @click="router.push({ name: r, replace: true })"
+-              class="h-14 flex-col items-center justify-center pt-2"
+-              :class="r === route.name && 'dock-active'"
+-            >
+-              <component
+-                :is="ROUTE_ICON_MAP[r]"
+-                class="h-5 w-5 flex-shrink-0"
+-              />
+-              <span class="dock-label">
+-                {{ $t(r) }}
+-              </span>
+-            </button>
+-          </div>
+-          <div
+-            class="fixed bottom-0 z-10 w-full"
+-            style="
+-              background: linear-gradient(
+-                to top,
+-                rgba(0, 0, 0, 0.18) 0%,
+-                rgba(0, 0, 0, 0.1) 30%,
+-                rgba(0, 0, 0, 0.04) 60%,
+-                rgba(0, 0, 0, 0.01) 85%,
+-                rgba(0, 0, 0, 0) 100%
+-              );
+-              height: env(safe-area-inset-bottom);
+-            "
+-          ></div>
+-        </template>
+-      </div>
+-    </RouterView>
+-  </div>
+-</template>
+-
+ <script setup lang="ts">
+ import { isBackendAvailable } from '@/assembly/backend'
+ import { startBackendSession } from '@/assembly/session'
+-import SideBar from '@/components/sidebar/SideBar.vue'
+-import { dockTop } from '@/composables/paddingViews'
+-import { checkUIUpdate } from '@/assembly/version'
+-import { pageTransitionMode, pageTransitionName } from '@/composables/pageTransition'
+-import { useSwipeRouter } from '@/composables/swipe'
+-import { ROUTE_ICON_MAP } from '@/constant'
++import { fetchProxies } from '@/assembly/proxies'
++import LanguageSelect from '@/components/settings/general/LanguageSelect.vue'
+ import { renderRoutes } from '@/helper'
+-import { isMiddleScreen } from '@/helper/utils'
+-import { fetchProxies } from '@/assembly/proxies'
+-import { isSidebarCollapsed } from '@/store/settings'
+-import { activeBackend, activeUuid } from '@/store/setup'
+-import { useDocumentVisibility, useElementBounding } from '@vueuse/core'
+-import { ref, watch } from 'vue'
+-import { RouterView, useRouter } from 'vue-router'
++import { activeBackend, activeUuid, openBackendManager } from '@/store/setup'
++import { useDocumentVisibility } from '@vueuse/core'
++import { watch } from 'vue'
++import { RouterLink, RouterView } from 'vue-router'
+ 
+-const router = useRouter()
+-const { swiperRef } = useSwipeRouter()
+-const sidebarLayoutCollapsed = ref(isSidebarCollapsed.value)
+-
+-const dockRef = ref<HTMLDivElement>()
+-const { top: dockRefTop } = useElementBounding(dockRef)
+-
+-const syncSidebarLayoutState = () => {
+-  sidebarLayoutCollapsed.value = isSidebarCollapsed.value
+-}
+-
+-watch(isSidebarCollapsed, (value) => {
+-  if (value) {
+-    sidebarLayoutCollapsed.value = true
++const documentVisible = useDocumentVisibility()
++watch(documentVisible, async () => {
++  if (!activeBackend.value || documentVisible.value !== 'visible') return
++  const uuid = activeUuid.value
++  if (!(await isBackendAvailable(activeBackend.value)) && uuid === activeUuid.value) {
++    startBackendSession()
++  } else if (uuid === activeUuid.value) {
++    fetchProxies()
+   }
+ })
++</script>
+ 
+-watch(
+-  isMiddleScreen,
+-  (value) => {
+-    if (!value) {
+-      sidebarLayoutCollapsed.value = isSidebarCollapsed.value
+-    }
+-  },
+-  { immediate: true },
+-)
+-
+-watch(
+-  dockRefTop,
+-  () => {
+-    dockTop.value = window.innerHeight - dockRefTop.value
+-  },
+-  { immediate: true },
+-)
+-
+-const documentVisible = useDocumentVisibility()
+-
+-// 息屏 / 切走期间后端可能已经没了(睡眠、换网、内核重启)。回到前台先确认一次,
+-// 连不上就重开会话 —— 探测失败会把 BackendConnectionError 顶出来,
+-// 由它给出诊断、重试和切换后端,这里不再自己弹一个只能二选一的对话框。
+-watch(
+-  documentVisible,
+-  async () => {
+-    if (!activeBackend.value || documentVisible.value !== 'visible') return
+-
+-    const uuid = activeBackend.value.uuid
+-
+-    if (await isBackendAvailable(activeBackend.value)) return
+-    // 探测期间用户可能已经自己切走了,别把新后端的会话也重开一遍。
+-    if (uuid === activeUuid.value) startBackendSession()
+-  },
+-  {
+-    immediate: true,
+-  },
+-)
+-
+-watch(documentVisible, () => {
+-  if (documentVisible.value !== 'visible') return
+-  fetchProxies()
+-})
+-
+-checkUIUpdate()
+-</script>
++<template>
++  <div class="flex size-full min-w-0 flex-col">
++    <nav
++      aria-label="运行面板"
++      class="bg-base-200 border-base-300 flex shrink-0 flex-wrap items-center gap-1 border-b p-2"
++    >
++      <RouterLink
++        v-for="name in renderRoutes"
++        :key="name"
++        :to="{ name }"
++        class="btn btn-sm btn-ghost"
++        active-class="btn-active"
++        :aria-label="$t(name)"
++      >
++        {{ $t(name) }}
++      </RouterLink>
++      <button
++        class="btn btn-sm ml-auto"
++        @click="openBackendManager()"
++      >
++        {{ $t('backend') }}
++      </button>
++      <LanguageSelect />
++    </nav>
++    <main class="relative min-h-0 min-w-0 flex-1 overflow-hidden">
++      <RouterView />
++    </main>
++  </div>
++</template>
+--- a/src/views/LogsPage.vue
++++ b/src/views/LogsPage.vue
+@@ -5,7 +5,6 @@
+         ? 'relative flex size-full flex-col overflow-hidden'
+         : 'relative size-full overflow-x-hidden'
+     "
+-    :style="isLogTable ? padding : undefined"
+   >
+     <template v-if="isLogTable">
+       <LogsCtrl />
+@@ -57,7 +56,6 @@
+ import LogsCtrl from '@/components/controls/LogsCtrl.tsx'
+ import LogsCard from '@/components/logs/LogsCard.vue'
+ import LogsTable from '@/components/logs/LogsTable.vue'
+-import { usePaddingForViews } from '@/composables/paddingViews'
+ import { LIST_DISPLAY_STYLE } from '@/constant'
+ import { toSearchRegex } from '@/helper/search'
+ import {
+@@ -76,10 +74,6 @@
+ const { t } = useI18n()
+ 
+ const isLogTable = computed(() => logDisplayStyle.value === LIST_DISPLAY_STYLE.TABLE)
+-const { padding } = usePaddingForViews({
+-  offsetTop: 0,
+-  offsetBottom: 0,
+-})
+ 
+ const renderLogs = computed(() => {
+   let renderLogs = logs.value
+--- a/src/views/OverviewPage.vue
++++ b/src/views/OverviewPage.vue
+@@ -1,8 +1,5 @@
+ <template>
+-  <div
+-    class="h-full overflow-x-hidden overflow-y-auto"
+-    :style="padding"
+-  >
++  <div class="h-full overflow-x-hidden overflow-y-auto">
+     <OverviewCtrl />
+     <div class="flex flex-col gap-3 p-3">
+       <component
+@@ -22,15 +19,10 @@
+ import ProviderTrafficOverview from '@/components/overview/ProviderTrafficOverview.vue'
+ import RuleHitCountCard from '@/components/overview/RuleHitCountCard.vue'
+ import TopologyCharts from '@/components/overview/TopologyCharts.vue'
+-import { usePaddingForViews } from '@/composables/paddingViews'
+ import { overviewCardOrder } from '@/store/settings'
+ import type { Component } from 'vue'
+-import { computed, defineAsyncComponent } from 'vue'
++import { computed } from 'vue'
+ 
+-const { padding } = usePaddingForViews({
+-  offsetTop: 0,
+-  offsetBottom: 0,
+-})
+ const visibleCards = computed(() => {
+   return overviewCardOrder.value.filter((card) => card.visible)
+ })
+@@ -40,7 +32,6 @@
+   NetworkCard,
+   ProviderTrafficOverview,
+   TopologyCharts,
+-  EarthGlobeCard: defineAsyncComponent(() => import('@/components/overview/EarthGlobeCard.vue')),
+   ConnectionHistory,
+   RuleHitCountCard,
+ }
+--- a/src/views/ProxiesPage.vue
++++ b/src/views/ProxiesPage.vue
+@@ -7,7 +7,6 @@
+     <div
+       class="max-md:scrollbar-hidden relative h-full min-w-0 flex-1"
+       :class="disableProxiesPageScroll ? 'overflow-y-hidden' : 'overflow-y-scroll'"
+-      :style="padding"
+       ref="proxiesRef"
+       @scroll.passive="handleScroll"
+     >
+@@ -51,9 +50,7 @@
+ import FolderTopBar from '@/components/proxies/folders/FolderTopBar.vue'
+ import ProxyGroup from '@/components/proxies/ProxyGroup.vue'
+ import ProxyGroupForMobile from '@/components/proxies/ProxyGroupForMobile.vue'
+-import ProxyProvider from '@/components/proxies/ProxyProvider.vue'
+ import ProxyGroupChainModal from '@/components/proxies/ProxyGroupChainModal.vue'
+-import { usePaddingForViews } from '@/composables/paddingViews'
+ import {
+   disableProxiesPageScroll,
+   isProxiesPageMounted,
+@@ -68,10 +65,6 @@
+ import { useSessionStorage } from '@vueuse/core'
+ import { computed, nextTick, onMounted, ref, watch } from 'vue'
+ 
+-const { padding } = usePaddingForViews({
+-  offsetTop: 0,
+-  offsetBottom: 0,
+-})
+ const renderPageItems = renderProxiesPageItems
+ const proxiesRef = ref()
+ const scrollStatus = useSessionStorage('cache/proxies-scroll-status', {
+@@ -123,10 +116,6 @@
+ })
+ 
+ const renderComponent = computed(() => {
+-  if (proxiesTabShow.value === PROXY_TAB_TYPE.PROVIDER) {
+-    return ProxyProvider
+-  }
+-
+   if (isMiddleScreen.value && displayTwoColumns.value) {
+     return ProxyGroupForMobile
+   }
+--- a/src/views/SetupPage.vue
++++ b/src/views/SetupPage.vue
+@@ -3,9 +3,6 @@
+     class="bg-base-200/50 h-full w-full items-center justify-center overflow-auto sm:flex"
+     @keydown.enter="handleSubmit(form)"
+   >
+-    <div class="absolute top-4 right-4 max-sm:hidden">
+-      <DashboardSettings />
+-    </div>
+     <div class="absolute right-4 bottom-4 max-sm:hidden">
+       <LanguageSelect />
+     </div>
+@@ -49,21 +46,16 @@
+       <div class="mt-4 sm:hidden">
+         <LanguageSelect />
+       </div>
+-      <div class="absolute top-2 right-2 sm:hidden">
+-        <DashboardSettings />
+-      </div>
+     </div>
+   </div>
+ </template>
+ 
+ <script setup lang="ts">
+ import { probeBackend } from '@/assembly/backend'
+-import DashboardSettings from '@/components/common/DashboardSettings.vue'
+ import ReachabilityIndicator from '@/components/common/ReachabilityIndicator.vue'
+ import BackendForm from '@/components/settings/backend/BackendForm.vue'
+ import LanguageSelect from '@/components/settings/general/LanguageSelect.vue'
+ import { ROUTE_NAME } from '@/constant'
+-import { syncSettingsFromCore } from '@/helper/autoImportSettings'
+ import { useBackendReachability } from '@/composables/backendReachability'
+ import { describeProbeFailure } from '@/helper/connectivity'
+ import { showNotification } from '@/helper/notification'
+@@ -74,9 +66,9 @@
+ import { computed, ref, watch } from 'vue'
+ 
+ const form = ref<Omit<Backend, 'uuid'>>({
+-  type: 'clash' as BackendType,
+-  protocol: 'http',
+-  host: '127.0.0.1',
++  type: 'singbox' as BackendType,
++  protocol: window.location.protocol === 'https:' ? 'https' : 'http',
++  host: window.location.hostname,
+   port: '9090',
+   secondaryPath: '',
+   password: '',
+@@ -92,13 +84,7 @@
+ type SetupForm = Omit<Backend, 'uuid'>
+ 
+ const finishLogin = async () => {
+-  try {
+-    const synced = await syncSettingsFromCore()
+-    if (synced) return
+-  } catch (error) {
+-    console.error('Failed to sync settings after login:', error)
+-  }
+-  router.push({ name: ROUTE_NAME.proxies })
++  router.push({ name: ROUTE_NAME.overview })
+ }
+ 
+ // 提交 = 再确认一次连通性后存下并进入面板。
+--- a/tailwind.config.ts
++++ b/tailwind.config.ts
+@@ -1,8 +1,54 @@
++import { existsSync, readFileSync, statSync } from 'node:fs'
++import { dirname, resolve } from 'node:path'
+ import plugin from 'tailwindcss/plugin'
++import ts from 'typescript'
++import { parse } from 'vue/compiler-sfc'
++
++// Scan only local modules reachable from the application entry, including lazy imports.
++// Keep complete source text (not rendered DOM) so conditional and responsive classes survive.
++const root = process.cwd()
++const visited = new Set<string>()
++const sourceFiles: string[] = [resolve(root, 'index.html')]
++const visit = (file: string) => {
++  if (visited.has(file)) return
++  visited.add(file)
++  if (!/\.(vue|tsx?|jsx?)$/.test(file) || file.endsWith('.d.ts')) return
++  sourceFiles.push(file)
++  const source = readFileSync(file, 'utf8')
++  const descriptor = file.endsWith('.vue') ? parse(source).descriptor : undefined
++  const script = descriptor
++    ? [descriptor.script?.content, descriptor.scriptSetup?.content].filter(Boolean).join('\n')
++    : source
++  for (const imported of ts.preProcessFile(script, true, true).importedFiles) {
++    const name = imported.fileName
++    if (!name.startsWith('@/') && !name.startsWith('.')) continue
++    const base = name.startsWith('@/')
++      ? resolve(root, 'src', name.slice(2))
++      : resolve(dirname(file), name)
++    const target = [
++      '',
++      '.ts',
++      '.tsx',
++      '.js',
++      '.jsx',
++      '.vue',
++      '/index.ts',
++      '/index.tsx',
++      '/index.js',
++      '.d.ts',
++      '/index.d.ts',
++    ]
++      .map((suffix) => base + suffix)
++      .find((candidate) => existsSync(candidate) && statSync(candidate).isFile())
++    if (!target) throw new Error(`Cannot resolve CSS source import ${name} in ${file}`)
++    visit(target)
++  }
++}
++visit(resolve(root, 'src/main.ts'))
+ 
+ /** @type {import('tailwindcss').Config} */
+ export default {
+-  content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}'],
++  content: sourceFiles,
+   theme: {
+     extend: {
+       colors: {
+--- a/tsconfig.app.json
++++ b/tsconfig.app.json
+@@ -1,9 +1,9 @@
+ {
+   "extends": "@vue/tsconfig/tsconfig.dom.json",
+-  "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
++  "include": ["env.d.ts", "src/main.ts", "src/**/*.d.ts"],
+   "exclude": ["src/**/__tests__/*"],
+   "compilerOptions": {
+-    "composite": true,
++    "composite": false,
+     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+     "noUncheckedIndexedAccess": false,
+     "paths": {
+--- a/tsconfig.node.json
++++ b/tsconfig.node.json
+@@ -5,13 +5,13 @@
+     "vitest.config.*",
+     "cypress.config.*",
+     "nightwatch.conf.*",
+-    "playwright.config.*"
++    "playwright.config.*",
++    "tailwind.config.ts"
+   ],
+   "compilerOptions": {
+     "composite": true,
+     "noEmit": true,
+     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
+-
+     "module": "ESNext",
+     "moduleResolution": "Bundler",
+     "types": ["node"]
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -1,91 +1,48 @@
+ import vue from '@vitejs/plugin-vue'
+ import vueJsx from '@vitejs/plugin-vue-jsx'
+-import { execSync } from 'child_process'
+ import { fileURLToPath, URL } from 'node:url'
+ import { defineConfig } from 'vite'
+-import { VitePWA } from 'vite-plugin-pwa'
+ import { version } from './package.json'
++import tailwindConfig from './tailwind.config'
+ 
+-const getGitCommitId = (): string => {
+-  try {
+-    const commitMessage = execSync('git log -1 --pretty=%B', { encoding: 'utf8' }).trim()
++const cssSources = new Set(tailwindConfig.content)
++const sourceRoot = fileURLToPath(new URL('./src/', import.meta.url))
+ 
+-    if (commitMessage.includes('chore(main): release')) {
+-      return ''
+-    }
+-
+-    return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim()
+-  } catch (error) {
+-    console.warn('无法获取git commit ID:', error)
+-    return ''
+-  }
+-}
+-
+-// Selects which fonts get bundled. One of:
+-//   all (default) | cdn | firasans | misans | pingfang | sarasa | none
+-// See src/assets/load-fonts.ts for what each value loads.
+-const font = process.env.FONT || 'all'
+-
+-// https://vite.dev/config/
+ export default defineConfig({
+   define: {
+-    __APP_VERSION__: JSON.stringify(version),
+-    __COMMIT_ID__: JSON.stringify(getGitCommitId()),
+-    __FONT__: JSON.stringify(font),
++    __APP_VERSION__: JSON.stringify(version + '-luci'),
++    __COMMIT_ID__: JSON.stringify(''),
++    __FONT__: JSON.stringify('none'),
+   },
+   base: './',
+   plugins: [
+     vue(),
+     vueJsx(),
+-    VitePWA({
+-      registerType: 'autoUpdate',
+-      includeAssets: ['favicon.svg', 'favicon-dark.svg'],
+-      workbox: {
+-        // The globe is lazy-loaded, but its local textures and bundled attribution must
+-        // remain available after the first PWA install/update for offline cache reuse.
+-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,webp,jpg,md}'],
+-        // The bundle is above Workbox's 2 MiB default because sing-box native
+-        // API support and the Tools page are always bundled.
+-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
++    {
++      name: 'native-only-audit',
++      generateBundle(_options, bundle) {
++        for (const output of Object.values(bundle)) {
++          if (output.type !== 'chunk') continue
++          for (const id of Object.keys(output.modules)) {
++            const source = id.split('?')[0]
++            if (
++              source.startsWith(sourceRoot) &&
++              /\.(vue|tsx?|jsx?)$/.test(source) &&
++              !cssSources.has(source)
++            ) {
++              this.error(`Bundled module missing from CSS scan: ${source}`)
++            }
++            if (/\/src\/(?:api\/(?:clash|http)|assembly\/[^/]+\/clash)\.ts/.test(id)) {
++              this.error(`Clash API module must not be bundled: ${id}`)
++            }
++          }
++        }
+       },
+-      manifest: {
+-        name: 'zashboard',
+-        short_name: 'zashboard',
+-        description: 'a dashboard using clash api',
+-        theme_color: '#000000',
+-        icons: [
+-          {
+-            src: './pwa-192x192.png',
+-            sizes: '192x192',
+-            type: 'image/png',
+-            purpose: 'any',
+-          },
+-          {
+-            src: './pwa-512x512.png',
+-            sizes: '512x512',
+-            type: 'image/png',
+-            purpose: 'any',
+-          },
+-          {
+-            src: './pwa-maskable-192x192.png',
+-            sizes: '192x192',
+-            type: 'image/png',
+-            purpose: 'maskable',
+-          },
+-          {
+-            src: './pwa-maskable-512x512.png',
+-            sizes: '512x512',
+-            type: 'image/png',
+-            purpose: 'maskable',
+-          },
+-        ],
+-      },
+-    }),
++    },
+   ],
+   resolve: {
+     alias: {
+       '@': fileURLToPath(new URL('./src', import.meta.url)),
+-      // mmdb-lib imports Node's `net`; back it with a tiny browser shim.
+       net: fileURLToPath(new URL('./src/helper/netShim.ts', import.meta.url)),
+     },
+   },

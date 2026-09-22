@@ -12,6 +12,7 @@
 - 面板文案使用简体中文，LuCI 通用控件遵循系统语言。
 - 使用 LuCI 官方标签页、复选框、通知和按钮样式，布局适配默认主题与 Argon。
 - 清理已保存配置使用的缓存文件，可选择完成后启动服务。
+- 内置裁剪版 zashboard v3.22.0，提供概览、代理、连接、实时日志，支持 LuCI 内嵌与独立访问。
 
 ## 安装
 
@@ -27,6 +28,18 @@ apk add --allow-untrusted /tmp/luci-app-sing-box-*.apk
 发布的 APK 未签名，安装时需要 `--allow-untrusted`。依赖为 `luci-base`、`sing-box`、`rpcd`、`jshn` 和 `jsonfilter`，由设备匹配的软件源安装。
 
 重新登录 LuCI，进入 **服务 → sing-box**。升级后如仍显示旧界面，请强制刷新浏览器。
+
+## 运行面板
+
+**服务与配置**提供原有管理功能；**运行面板**内嵌裁剪版 zashboard，仅保留概览、代理、连接、日志四页，以及后端连接和页面内显示设置。仅支持 sing-box 原生 API，界面语言提供简体中文和英文。
+
+也可直接打开 `http://路由器地址/luci-static/sing-box/dashboard/index.html`，无需先进入 LuCI。首次使用需填写浏览器可访问的 API 地址、端口和密钥。静态页面通常不要求 LuCI 登录，数据及操作由 sing-box API 独立认证，LuCI 的只读权限不适用于该 API。面板不会自动读取配置中的密钥。
+
+连接信息（含密钥）保存在当前浏览器的 localStorage；同源的内嵌和独立访问共享设置。API 跨源访问需要相应 CORS 配置；HTTPS 页面需使用 HTTPS API。插件不自动修改 sing-box 配置、配置反向代理或开放端口。
+
+运行面板的日志是 API 实时日志；**服务与配置 → 系统日志**仍通过 `logread` 查看启动错误。sing-box 停止时，静态页面仍可访问，但无法获取运行数据。
+
+面板固定版本，使用系统正文字体，不依赖字体 CDN；升级随插件发布，不提供上游自更新入口。构建与维护说明见 [dashboard/README.md](dashboard/README.md)。
 
 ## sing-box 服务配置
 
@@ -95,7 +108,7 @@ sing-box check -c <待校验文件> -D <workdir>
 
 ## 清理缓存
 
-在 **概览 → 维护 → 清理缓存** 中确认后执行。后端读取已保存配置的 `experimental.cache_file`：仅在 `enabled: true` 时提供操作，`path` 留空时使用 `cache.db`，相对路径按 UCI 的 `workdir` 解析。
+在 **服务 → 维护 → 清理缓存** 中确认后执行。后端读取已保存配置的 `experimental.cache_file`：仅在 `enabled: true` 时提供操作，`path` 留空时使用 `cache.db`，相对路径按 UCI 的 `workdir` 解析。
 
 弹窗显示工作目录和缓存文件的实际路径。操作先停止服务并确认所有实例的进程已退出，再删除该缓存文件，**不备份、不创建空数据库、不删除工作目录中的其他文件**。“完成后启动服务”默认跟随打开弹窗时的运行状态，可手动更改；新缓存由 sing-box 启动时生成。启动失败会显示错误并尝试停止服务，旧缓存无法恢复。自启设置保持不变。
 
@@ -121,14 +134,16 @@ sing-box check -c <待校验文件> -D <workdir>
 
 在 **Ubuntu 26.04** 上直接生成供 OpenWrt 使用的 APK v3 包，无需下载 SDK、准备 feeds 或选择 CPU 架构。
 
-1. 将项目提交到 GitHub，保持 `Makefile`、`htdocs`、`root` 和 `.github` 位于仓库根目录。
+1. 将项目提交到 GitHub，保持 `Makefile`、`htdocs`、`root`、`dashboard` 和 `.github` 位于仓库根目录。
 2. 进入 **Actions → Release → Run workflow**。
 3. 选择构建分支，填写新标签，例如 `v0.1.0`。
 4. 按需勾选 `prerelease`，然后运行工作流。
 
-缓存未命中时下载并编译固定版本的 APK 打包工具，缓存命中时复用。发布时复制文件，使用 `apk mkpkg` 生成一个安装包并上传 Release。安装和升级脚本处理 LuCI 缓存刷新。
+缓存未命中时下载并编译固定版本的 APK 打包工具，缓存命中时复用。发布时先构建裁剪版 zashboard（Node.js 24、pnpm 11.20.0），再复制文件，使用 `apk mkpkg` 生成一个安装包并上传 Release。安装和升级脚本处理 LuCI 缓存刷新。
 
 版本号取标签去掉 `v` 的部分，标签格式为 `v数字.数字.数字`；包修订号和运行依赖取自 `Makefile`。
+
+Release 标题直接使用版本标签（如 `v0.1.0`）。说明按时间顺序列出上次发布 APK 后到本次构建的完整提交信息，再附上安装命令。基准为最近发布且包含本插件 APK 的 Release（包括预发布，不含草稿）；首次发布列出当前构建的全部提交历史。
 
 发布文件（`PKG_RELEASE:=1`）：
 
@@ -140,11 +155,11 @@ luci-app-sing-box-<版本>-r1.apk
 
 发布使用仓库自带的 `GITHUB_TOKEN`。请填写尚未存在的标签；若发布中断后已有同名标签或 Release 草稿，处理残留后重试，或使用新版本号。
 
-APK 直接上传到 Release，构建日志在 Actions 运行页面查看。工作流不运行测试、lint 或额外校验任务。
+APK 直接上传到 Release，构建日志在 Actions 运行页面查看。工作流包含面板源码摘要校验、Vue/TypeScript 检查与前端构建，不运行设备测试或 lint。
 
 ## 从源码构建
 
-在 Linux 上使用与目标固件匹配的 OpenWrt SDK 或源码树，将项目放到 `package/luci-app-sing-box`：
+先在本仓库执行 `bash dashboard/build.sh` 生成面板静态资源（需要 Node.js 24、pnpm 11.20.0）。然后在 Linux 上使用与目标固件匹配的 OpenWrt SDK 或源码树，将项目放到 `package/luci-app-sing-box`：
 
 ```sh
 ./scripts/feeds update -a
@@ -179,6 +194,10 @@ make package/luci-app-sing-box/compile V=s
 - [sing-box 上游 OpenWrt 启动脚本](https://github.com/SagerNet/sing-box/blob/testing/release/config/openwrt.init)
 - [OpenWrt packages feed 启动脚本](https://github.com/openwrt/packages/blob/master/net/sing-box/files/sing-box.init)
 - [LuCI 应用示例](https://github.com/openwrt/luci/tree/master/applications/luci-app-example)
+
+## 致谢
+
+感谢 [Zephyruso/zashboard](https://github.com/Zephyruso/zashboard) 的作者与贡献者。本项目的运行面板基于 zashboard v3.22.0 裁剪和适配，保留上游 MIT 许可证；具体改动与构建方式见 [dashboard/README.md](dashboard/README.md)。
 
 ## 许可证
 

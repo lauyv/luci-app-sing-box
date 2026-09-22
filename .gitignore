@@ -4,3 +4,5 @@
 *.apk
 /dist/
 /build.log
+/.dashboard-build/
+/htdocs/luci-static/sing-box/dashboard/

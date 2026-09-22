@@ -26,13 +26,25 @@ defaults:
 jobs:
   release:
     runs-on: ubuntu-26.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       RELEASE_TAG: ${{ inputs.tag }}
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.20.0'
+
+      - name: Build trimmed zashboard
+        run: bash dashboard/build.sh
 
       - name: Restore packaging tools
         id: tools
@@ -65,16 +77,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PRERELEASE: ${{ inputs.prerelease }}
           BUILD_SHA: ${{ github.sha }}
+          NOTES_FILE: ${{ runner.temp }}/sing-box-release-notes.md
         run: |
+          bash .github/scripts/release-notes.sh
           flags=()
           if [[ "$PRERELEASE" == true ]]; then flags+=(--prerelease); fi
           gh release create "$RELEASE_TAG" dist/luci-app-sing-box-*.apk \
             --target "$BUILD_SHA" \
-            --title "sing-box LuCI $RELEASE_TAG (OpenWrt APK)" \
-            --notes "OpenWrt · APK v3 · noarch · $BUILD_SHA
-
-          Requires APK v3 support and compatible LuCI, rpcd and sing-box service interfaces.
-
-          Install:
-          apk add --allow-untrusted ./luci-app-sing-box-*.apk
-          /etc/init.d/rpcd restart" "${flags[@]}"
+            --title "$RELEASE_TAG" \
+            --notes-file "$NOTES_FILE" "${flags[@]}"

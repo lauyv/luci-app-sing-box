@@ -321,7 +321,7 @@ return view.extend({
         this.notify(messages.autostart_updated);
       }, true);
     });
-    const overview = E('div', { 'data-tab': 'overview', 'data-tab-title': '概览' }, [
+    const overview = E('div', { 'data-tab': 'overview', 'data-tab-title': '服务' }, [
       field('运行状态', this.runtime),
       field('内核版本', this.version),
       field('配置文件', this.path),
@@ -390,7 +390,7 @@ return view.extend({
       readonly: '',
       'aria-label': 'sing-box 系统日志',
     });
-    const logs = E('div', { 'data-tab': 'logs', 'data-tab-title': '日志' }, [this.logHint, this.logUpdated, this.logs]);
+    const logs = E('div', { 'data-tab': 'logs', 'data-tab-title': '系统日志' }, [this.logHint, this.logUpdated, this.logs]);
     logs.addEventListener('cbi-tab-active', () => this.refreshLogs());
     const panes = E('div', {}, [overview, config, logs]);
     const root = E('div', { class: 'cbi-map', id: 'sing-box-panel' }, [
