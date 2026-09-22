@@ -8,10 +8,10 @@ set -euo pipefail
 RELEASES_FILE=$(mktemp)
 trap 'rm -f -- "$RELEASES_FILE"' EXIT
 
-# Include prereleases; ignore drafts and releases without this application's APK.
+# Include prereleases; ignore drafts and releases without this application's package.
 # Select by publication time, not tag version or commit creation time.
 gh api --paginate "repos/$GH_REPO/releases?per_page=100" \
-  --jq '.[] | select(.draft == false and any(.assets[]; .name | test("^luci-app-sing-box-.*\\.apk$"))) | [.published_at, .tag_name] | @tsv' \
+  --jq '.[] | select(.draft == false and any(.assets[]; .name | test("^luci-app-sing-box[-_].*\\.(apk|ipk)$"))) | [.published_at, .tag_name] | @tsv' \
   > "$RELEASES_FILE"
 PREVIOUS_TAG=$(LC_ALL=C sort -r "$RELEASES_FILE" | awk -F '\t' 'NR == 1 { print $2 }')
 
@@ -30,10 +30,21 @@ APK_FILES=(dist/luci-app-sing-box-*.apk)
   exit 1
 }
 APK_NAME=$(basename -- "${APK_FILES[0]}")
+IPK_FILES=(dist/luci-app-sing-box_*.ipk)
+[[ ${#IPK_FILES[@]} -eq 1 ]] || {
+  printf 'Expected exactly one IPK in dist, found %d\n' "${#IPK_FILES[@]}" >&2
+  exit 1
+}
+IPK_NAME=$(basename -- "${IPK_FILES[0]}")
 
 cat >> "$NOTES_FILE" <<EOF
 
 Install:
+APK systems:
 apk add --allow-untrusted ./$APK_NAME
+
+opkg systems:
+opkg install ./$IPK_NAME
+
 /etc/init.d/rpcd restart
 EOF

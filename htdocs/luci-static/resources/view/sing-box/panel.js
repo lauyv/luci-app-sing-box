@@ -390,7 +390,7 @@ return view.extend({
           this.button('重启', () => this.queue('restart')),
         ]),
       ),
-      field('维护', [
+      field('维护缓存', [
         this.button('清理缓存', () => this.showCacheReset(), 'negative'),
         E('div', { class: 'cbi-value-description' }, '仅清理缓存数据库，不备份，不重建工作目录。'),
       ]),
@@ -451,7 +451,11 @@ return view.extend({
       readonly: '',
       'aria-label': 'sing-box 系统日志',
     });
-    const logs = E('div', { 'data-tab': 'logs', 'data-tab-title': '系统日志' }, [this.logHint, this.logUpdated, this.logs]);
+    const logs = E('div', { 'data-tab': 'logs', 'data-tab-title': '系统日志' }, [
+      this.logHint,
+      this.logUpdated,
+      this.logs,
+    ]);
     logs.addEventListener('cbi-tab-active', () => this.refreshLogs());
     const panes = E('div', {}, [overview, config, logs]);
     const root = E('div', { class: 'cbi-map', id: 'sing-box-panel' }, [
