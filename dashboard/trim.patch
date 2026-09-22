@@ -1517,13 +1517,13 @@
  
 --- a/src/components/overview/OverviewCardSettingsDialog.vue
 +++ b/src/components/overview/OverviewCardSettingsDialog.vue
-@@ -45,7 +45,6 @@
+@@ -45,7 +45,3 @@
    NetworkCard: 'networkCard',
-   ProviderTrafficOverview: 'providerTrafficOverview',
-   TopologyCharts: 'topologyCharts',
+-  ProviderTrafficOverview: 'providerTrafficOverview',
+-  TopologyCharts: 'topologyCharts',
 -  EarthGlobeCard: 'earthGlobeCard',
    ConnectionHistory: 'connectionHistory',
-   RuleHitCountCard: 'ruleHitCountCard',
+-  RuleHitCountCard: 'ruleHitCountCard',
  }
 --- a/src/components/settings/backend/BackendForm.vue
 +++ b/src/components/settings/backend/BackendForm.vue
@@ -1647,13 +1647,13 @@
  }
  
  export enum FONTS {
-@@ -322,7 +320,6 @@
+@@ -322,7 +320,3 @@
    NetworkCard = 'NetworkCard',
-   ProviderTrafficOverview = 'ProviderTrafficOverview',
-   TopologyCharts = 'TopologyCharts',
+-  ProviderTrafficOverview = 'ProviderTrafficOverview',
+-  TopologyCharts = 'TopologyCharts',
 -  EarthGlobeCard = 'EarthGlobeCard',
    ConnectionHistory = 'ConnectionHistory',
-   RuleHitCountCard = 'RuleHitCountCard',
+-  RuleHitCountCard = 'RuleHitCountCard',
  }
 --- a/src/helper/index.ts
 +++ b/src/helper/index.ts
@@ -1971,7 +1971,7 @@
  export const autoIPCheck = useStorage('config/auto-ip-check', true)
  export const ipCheckPrimaryAPI = useStorage<IP_INFO_API>(
    'config/ip-check-primary-api',
-@@ -246,10 +229,6 @@
+@@ -246,23 +229,7 @@
      visible: true,
    },
    {
@@ -1979,10 +1979,23 @@
 -    visible: true,
 -  },
 -  {
-     card: OVERVIEW_CARD.TopologyCharts,
+-    card: OVERVIEW_CARD.TopologyCharts,
+-    visible: true,
+-  },
+-  {
+-    card: OVERVIEW_CARD.ProviderTrafficOverview,
+-    visible: true,
+-  },
+-  {
+     card: OVERVIEW_CARD.ConnectionHistory,
      visible: true,
    },
-@@ -272,27 +251,14 @@
+-  {
+-    card: OVERVIEW_CARD.RuleHitCountCard,
+-    visible: true,
+-  },
+ ]
+@@ -272,27 +239,14 @@
    defaultOverviewCardOrder,
  )
  
@@ -2377,10 +2390,10 @@
      <OverviewCtrl />
      <div class="flex flex-col gap-3 p-3">
        <component
-@@ -22,15 +19,10 @@
- import ProviderTrafficOverview from '@/components/overview/ProviderTrafficOverview.vue'
- import RuleHitCountCard from '@/components/overview/RuleHitCountCard.vue'
- import TopologyCharts from '@/components/overview/TopologyCharts.vue'
+@@ -22,15 +19,7 @@
+-import ProviderTrafficOverview from '@/components/overview/ProviderTrafficOverview.vue'
+-import RuleHitCountCard from '@/components/overview/RuleHitCountCard.vue'
+-import TopologyCharts from '@/components/overview/TopologyCharts.vue'
 -import { usePaddingForViews } from '@/composables/paddingViews'
  import { overviewCardOrder } from '@/store/settings'
  import type { Component } from 'vue'
@@ -2394,13 +2407,13 @@
  const visibleCards = computed(() => {
    return overviewCardOrder.value.filter((card) => card.visible)
  })
-@@ -40,7 +32,6 @@
+@@ -40,7 +29,3 @@
    NetworkCard,
-   ProviderTrafficOverview,
-   TopologyCharts,
+-  ProviderTrafficOverview,
+-  TopologyCharts,
 -  EarthGlobeCard: defineAsyncComponent(() => import('@/components/overview/EarthGlobeCard.vue')),
    ConnectionHistory,
-   RuleHitCountCard,
+-  RuleHitCountCard,
  }
 --- a/src/views/ProxiesPage.vue
 +++ b/src/views/ProxiesPage.vue

@@ -49,13 +49,6 @@ const server = createServer(async (req, res) => {
       errors.push('unexpected Clash API request: ' + url.pathname);
       throw new Error('Only native sing-box API is mocked');
     }
-    if (url.pathname === '/wrapper') {
-      res.setHeader('Content-Type', 'text/html');
-      res.end(
-        '<h2>LuCI wrapper smoke test</h2><iframe title="dashboard" src="/luci-static/sing-box/dashboard/index.html" style="width:100%;height:650px;border:0"></iframe>',
-      );
-      return;
-    }
     const filename = resolve(root, 'htdocs', '.' + decodeURIComponent(url.pathname));
     assert.ok(filename.startsWith(join(root, 'htdocs') + '/'));
     const data = await readFile(filename);
@@ -321,12 +314,6 @@ try {
     assert.ok(layout.scroll <= layout.width + 1, `mobile overflow: ${JSON.stringify(layout)}`);
     assert.ok(layout.main >= layout.nav - 1, 'navigation overlaps content');
   }
-  await cmd('Page.navigate', { url: origin + '/wrapper' });
-  await until(
-    '!!document.querySelector("iframe")?.contentDocument?.querySelector("nav")',
-    'iframe shares saved backend',
-  );
-  assert.equal(await evaluate('document.querySelector("iframe").contentDocument.querySelectorAll("nav a").length'), 4);
   assert.equal(await evaluate('navigator.serviceWorker.getRegistrations().then(x => x.length)'), 0);
   assert.ok(!calls.some(({ path }) => /upgrade|restart/.test(path)), 'unexpected core/UI maintenance call');
   for (const method of [
@@ -348,7 +335,7 @@ try {
   assert.ok(!calls.some(({ path }) => path.startsWith('/api/')), 'native test used Clash endpoints');
   assert.deepEqual(errors, [], 'browser or mock protocol errors');
   console.log(
-    `PASS [sing-box native gRPC-Web + grpc-websockets]: native-only setup, saved backend/theme/language migration, Chinese/English switch, trimmed CSS/assets, overview, node switch, connections/log streams, removed routes, mobile layout, iframe, no service worker or upgrade calls.`,
+    `PASS [sing-box native gRPC-Web + grpc-websockets]: native-only setup, saved backend/theme/language migration, Chinese/English switch, trimmed CSS/assets, overview, node switch, connections/log streams, removed routes, mobile layout, no service worker or upgrade calls.`,
   );
 } finally {
   await cdp('Browser.close').catch(() => browser.kill());

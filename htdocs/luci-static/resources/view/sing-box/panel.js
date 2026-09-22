@@ -327,6 +327,19 @@ return view.extend({
       field('配置文件', this.path),
       field('开机启动', checkbox),
       field(
+        '运行面板',
+        E(
+          'a',
+          {
+            class: 'cbi-button cbi-button-action',
+            href: '/luci-static/sing-box/dashboard/index.html',
+            target: '_blank',
+            rel: 'noopener noreferrer',
+          },
+          '独立打开',
+        ),
+      ),
+      field(
         '服务操作',
         E('div', { class: 'sing-box-actions' }, [
           this.button('启动', () => this.queue('start'), 'apply'),

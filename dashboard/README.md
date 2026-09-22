@@ -42,16 +42,15 @@ BROWSER_BIN=/path/to/chromium node dashboard/smoke.mjs
 
 测试使用临时浏览器配置和本地模拟 **sing-box 原生 API**（`daemon.StartedService`）：一元请求走 gRPC-Web/Protobuf，订阅走 `grpc-websockets`，并校验 Bearer 认证、订阅请求和节点切换参数。模拟协议字段取自固定 v3.22.0 源码的 `src/gen/daemon/started_service_pb.ts`，实现位于 `mock-singbox.mjs`。
 
-覆盖版本和启动时间、模式查询、代理组和出站订阅、节点切换、状态/流量、连接及日志订阅；同时检查原生连接表单提交、旧连接、主题及语言迁移、中英文切换、导航和弹窗样式、唯一国旗字体、两种主题、无 PWA 图标、四页导航、被移除的路由、手机窄屏、iframe 共享连接设置，以及未注册 Service Worker、未发送升级请求。原生测试断言所需 RPC 确实被调用，且没有调用 Clash 端点。
+覆盖版本和启动时间、模式查询、代理组和出站订阅、节点切换、状态/流量、连接及日志订阅；同时检查原生连接表单提交、旧连接、主题及语言迁移、中英文切换、导航和弹窗样式、唯一国旗字体、两种主题、无 PWA 图标、四页导航、被移除的路由、手机窄屏，以及未注册 Service Worker、未发送升级请求。原生测试断言所需 RPC 确实被调用，且没有调用 Clash 端点。
 
 测试通过浏览器请求拦截仅允许临时本地模拟服务器，阻止访问默认端口的真实服务及外部网络；不替代真实 sing-box / OpenWrt 设备联调。测试结束后清理临时浏览器配置，不保留测试截图。
 
 ## 访问与认证
 
-- LuCI：服务 → sing-box → 运行面板，iframe 中只加载一个实例。
-- 独立：`http://路由器地址/luci-static/sing-box/dashboard/index.html`，也可用服务器支持的 HTTPS。
+- 独立打开：在 LuCI 的服务页点击 **运行面板 → 独立打开**，或访问 `http://路由器地址/luci-static/sing-box/dashboard/index.html`；也可使用服务器支持的 HTTPS。LuCI 不再提供内嵌运行面板。
 - 直接打开静态页面通常不要求 LuCI 登录；API 使用自身的 secret 认证，与 LuCI ACL 独立。LuCI 不自动读取或传递配置中的密钥。
-- 后端地址、密钥和偏好沿用上游保存在当前浏览器的 localStorage；相同协议、主机和端口下，内嵌和独立访问共享设置。清除站点数据或在后端管理中删除连接可移除保存的连接。
+- 后端地址、密钥和偏好沿用上游保存在当前浏览器的 localStorage；清除站点数据或在后端管理中删除连接可移除保存的连接。
 - API 地址必须能从浏览器访问，不能将路由器的 `127.0.0.1` 当成浏览器可访问地址。不同源需要 API 允许面板所在源；HTTPS 页面需使用可访问的 HTTPS API。本项目没有新增反向代理或开放防火墙端口。
 - sing-box 停止时静态页面仍可打开，但运行数据不可用；启动失败信息应查看 LuCI 的系统日志。
 

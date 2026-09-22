@@ -12,7 +12,7 @@
 - 面板文案使用简体中文，LuCI 通用控件遵循系统语言。
 - 使用 LuCI 官方标签页、复选框、通知和按钮样式，布局适配默认主题与 Argon。
 - 清理已保存配置使用的缓存文件，可选择完成后启动服务。
-- 内置裁剪版 zashboard v3.22.0，提供概览、代理、连接、实时日志，支持 LuCI 内嵌与独立访问。
+- 内置裁剪版 zashboard v3.22.0，提供概览、代理、连接、实时日志，可通过独立页面访问。
 
 ## 安装
 
@@ -31,13 +31,13 @@ apk add --allow-untrusted /tmp/luci-app-sing-box-*.apk
 
 ## 运行面板
 
-**服务与配置**提供原有管理功能；**运行面板**内嵌裁剪版 zashboard，仅保留概览、代理、连接、日志四页，以及后端连接和页面内显示设置。仅支持 sing-box 原生 API，界面语言提供简体中文和英文。
+裁剪版 zashboard 仅保留概览、代理、连接、日志四页，以及后端连接和页面内显示设置。仅支持 sing-box 原生 API，界面语言提供简体中文和英文。概览页不包含连接拓扑、规则命中统计和提供商流量概览。
 
-也可直接打开 `http://路由器地址/luci-static/sing-box/dashboard/index.html`，无需先进入 LuCI。首次使用需填写浏览器可访问的 API 地址、端口和密钥。静态页面通常不要求 LuCI 登录，数据及操作由 sing-box API 独立认证，LuCI 的只读权限不适用于该 API。面板不会自动读取配置中的密钥。
+可在 LuCI 的 **服务 → sing-box → 服务** 页面点击 **运行面板 → 独立打开**，也可直接访问 `http://路由器地址/luci-static/sing-box/dashboard/index.html`。运行面板不再内嵌到 LuCI。首次使用需填写浏览器可访问的 API 地址、端口和密钥。静态页面通常不要求 LuCI 登录，数据及操作由 sing-box API 独立认证，LuCI 的只读权限不适用于该 API。面板不会自动读取配置中的密钥。
 
-连接信息（含密钥）保存在当前浏览器的 localStorage；同源的内嵌和独立访问共享设置。API 跨源访问需要相应 CORS 配置；HTTPS 页面需使用 HTTPS API。插件不自动修改 sing-box 配置、配置反向代理或开放端口。
+连接信息（含密钥）保存在当前浏览器的 localStorage。API 跨源访问需要相应 CORS 配置；HTTPS 页面需使用 HTTPS API。插件不自动修改 sing-box 配置、配置反向代理或开放端口。
 
-运行面板的日志是 API 实时日志；**服务与配置 → 系统日志**仍通过 `logread` 查看启动错误。sing-box 停止时，静态页面仍可访问，但无法获取运行数据。
+运行面板的日志是 API 实时日志；LuCI 的 **系统日志**仍通过 `logread` 查看启动错误。sing-box 停止时，静态页面仍可访问，但无法获取运行数据。
 
 面板固定版本，使用系统正文字体，不依赖字体 CDN；升级随插件发布，不提供上游自更新入口。构建与维护说明见 [dashboard/README.md](dashboard/README.md)。
 
