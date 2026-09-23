@@ -44,12 +44,26 @@ action_settings() {
 }
 
 lock() {
-	mkdir "$RUN/lock" 2>/dev/null
+	# The worker inherits this descriptor; the kernel releases it on process exit.
+	# Never unlink the lock file: concurrent callers must lock the same inode.
+	exec 9> "$RUN/operation.lock"
+	flock -n 9 && return 0
+	exec 9>&-
+	return 1
 }
 
 unlock() {
-	rm -f "$RUN/lock/pid"
-	rmdir "$RUN/lock" 2>/dev/null
+	exec 9>&-
+}
+
+recover_job() {
+	local state=''
+	# Called with the lock held, so no worker can still own these temporary files.
+	if json_load "$(cat "$RUN/job.json" 2>/dev/null)" 2>/dev/null; then
+		json_get_var state state
+		case "$state" in queued|running) job error operation_interrupted;; esac
+	fi
+	rm -f "$RUN/check.log" "$RUN/service.log" "$RUN/validation.json"
 }
 
 job() {
@@ -82,6 +96,8 @@ healthy() {
 
 # Run a command with a bounded lifetime without requiring coreutils-timeout.
 run_timeout() (
+	# Service scripts may spawn long-lived processes; do not pass our lock to them.
+	exec 9>&-
 	trap - EXIT HUP INT TERM
 	limit="$1"
 	shift
@@ -117,6 +133,35 @@ run_timeout() (
 	result=$?
 	command_pid=''
 	exit "$result"
+)
+
+# Store at most MAX_SIZE + 1 bytes, including when the server omits Content-Length.
+fetch_config() (
+	exec 9>&-
+	# Keep trap state in subshell variables: function locals may unwind before EXIT.
+	url="$1" destination="$2" downloader='' reader=''
+	stream=$(mktemp -d "$RUN/fetch.XXXXXX") || exit 1
+	# shellcheck disable=SC2329
+	cleanup_fetch() {
+		[ -z "$reader" ] || kill "$reader" 2>/dev/null
+		[ -z "$downloader" ] || kill "$downloader" 2>/dev/null
+		[ -z "$reader" ] || wait "$reader" 2>/dev/null
+		[ -z "$downloader" ] || wait "$downloader" 2>/dev/null
+		rm -rf "$stream"
+	}
+	trap cleanup_fetch EXIT
+	trap 'exit 1' HUP INT TERM
+	mkfifo "$stream/body" || exit 1
+	run_timeout 20 uclient-fetch -q -O - "$url" > "$stream/body" &
+	downloader=$!
+	head -c "$((MAX_SIZE + 1))" < "$stream/body" > "$destination" &
+	reader=$!
+	wait "$reader" || exit 1
+	reader=''
+	[ "$(wc -c < "$destination")" -le "$MAX_SIZE" ] || exit 2
+	wait "$downloader" || exit 1
+	downloader=''
+	exit 0
 )
 
 service_do() {
@@ -303,7 +348,8 @@ start_service() {
 
 worker() {
 	local action="$1" expected="${2:-}"
-	printf '%s' "$$" > "$RUN/lock/pid"
+	# Refuse direct invocation without the descriptor inherited from rpcd.
+	flock -n 9 || return 1
 	trap 'worker_exit' EXIT
 	trap 'job error operation_interrupted; exit 1' HUP INT TERM
 	job running operation_running '' "$action"

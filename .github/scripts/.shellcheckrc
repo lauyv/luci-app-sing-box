@@ -1,0 +1,3 @@
+# Follow the shared packaging script relative to the script being checked.
+external-sources=true
+source-path=SCRIPTDIR

@@ -21,6 +21,7 @@ case "$1" in
 esac
 
 prepare || { reply 0 'directories_failed' "$DETAILS"; exit 0; }
+command -v flock >/dev/null 2>&1 || { reply 0 flock_missing; exit 0; }
 case "$2" in
 	cache)
 		CACHE=''
@@ -43,7 +44,7 @@ case "$2" in
 		boot=0
 		"$INIT" enabled >/dev/null 2>&1 && [ "$(uci -q get sing-box.main.enabled)" = 1 ] && boot=1
 		busy=0
-		[ -d "$RUN/lock" ] && busy=1
+		if lock; then recover_job; unlock; else busy=1; fi
 		job_data=$(cat "$RUN/job.json" 2>/dev/null)
 		json_init
 		json_add_boolean ok 1
@@ -112,11 +113,12 @@ case "$2" in
 		printf '%s' "$url" | grep -q '[[:cntrl:]]' && { reply 0 url_invalid; exit 0; }
 		tmp=$(mktemp "$RUN/import.XXXXXX") || { reply 0 config_fetch_failed; exit 0; }
 		trap 'rm -f "$tmp"' EXIT
-		if ! run_timeout 20 uclient-fetch -q -O "$tmp" "$url"; then
-			reply 0 config_fetch_failed; exit 0
-		fi
-		[ -f "$tmp" ] || { reply 0 config_fetch_failed; exit 0; }
-		[ "$(wc -c < "$tmp")" -le "$MAX_SIZE" ] || { reply 0 config_too_large; exit 0; }
+		fetch_config "$url" "$tmp"
+		case "$?" in
+			0) ;;
+			2) reply 0 config_too_large; exit 0;;
+			*) reply 0 config_fetch_failed; exit 0;;
+		esac
 		content=$(cat "$tmp"; printf '.')
 		content=${content%.}
 		json_init
@@ -126,7 +128,8 @@ case "$2" in
 	save|check)
 		# jshn assigns these variables by name; initialize them for static analysis.
 		kind='' content='' revision=''
-		payload=$(head -c 524288)
+		# JSON may encode each content byte as a six-byte Unicode escape.
+		payload=$(head -c "$((MAX_SIZE * 6 + 4096))")
 		json_load "$payload" 2>/dev/null || { reply 0 request_invalid; exit 0; }
 		json_get_type kind content
 		[ "$kind" = string ] || { reply 0 content_invalid; exit 0; }

@@ -22,13 +22,15 @@
 
 ## 构建
 
-构建主机需要 Node.js 24、pnpm 11.20.0、curl、tar、patch，以及 sha256sum 或 shasum。路由器不需要 Node.js / pnpm。
+构建主机需要 Node.js 24、pnpm 11.20.0、curl、tar、patch、flock，以及 sha256sum 或 shasum。路由器不需要 Node.js / pnpm。
 
 ```sh
 bash dashboard/build.sh
 ```
 
-脚本下载、校验、应用补丁、安装锁定依赖，对应用入口的完整依赖链和声明文件进行 Vue/TypeScript 检查，对构建配置进行 TypeScript 检查；Vite 构建检查最终 JS 模块，禁止混入 Clash API 实现。全部通过后，输出到 `htdocs/luci-static/sing-box/dashboard/`。源码归档缓存在被忽略的 `.dashboard-build/`，生成资源也不提交 Git。每次构建使用独立临时目录，退出时自动删除解压源码、依赖和中间产物，仅保留归档缓存和最终静态资源。
+脚本下载、校验、应用补丁、安装锁定依赖，对应用入口的完整依赖链和声明文件进行 Vue/TypeScript 检查，对构建配置进行 TypeScript 检查；Vite 构建检查最终 JS 模块，禁止混入 Clash API 实现。全部通过后，输出到 `htdocs/luci-static/sing-box/dashboard/`。源码归档缓存在被忽略的 `.dashboard-build/`，生成资源也不提交 Git。每次构建使用独立临时目录，退出时自动删除解压源码、依赖和中间产物，保留归档缓存、锁文件和最终静态资源。
+
+同一仓库通过 `.dashboard-build/build.lock` 对整个构建过程加锁，覆盖下载、输出替换和退出清理；并发启动的第二个构建会立即报错退出。锁由内核在持有它的进程退出后释放，不要手动删除锁文件；文件存在不代表正在构建。构建主机缺少 `flock` 时，脚本会在下载前报错。
 
 GitHub 发布工作流会先运行此脚本。OpenWrt SDK 构建前也需在本仓库运行；缺少生成资源时打包会报错，不会生成缺少面板的安装包。
 

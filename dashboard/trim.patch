@@ -398,31 +398,55 @@
 -} from '@/api/clash'
 --- a/src/assembly/connections/index.ts
 +++ b/src/assembly/connections/index.ts
-@@ -1,15 +1,12 @@
+@@ -1,37 +1,13 @@
 -// 组装层 · connections 门面。连接流、断连/封锁动作,以及「原始连接数据 → view 字段」的
 -// 访问器与 getConnectionDisplayValue,都按后端类型动态路由到对应实现。
 -import { Channel, channel } from '@/assembly/backend'
-+// Native sing-box connections state and actions.
- import { CONNECTIONS_TABLE_ACCESSOR_KEY } from '@/constant'
- import type { Connection } from '@/types'
- import type { ConnectionDisplayOptions, ConnectionsSnapshot } from './accessor'
+-import { CONNECTIONS_TABLE_ACCESSOR_KEY } from '@/constant'
+-import type { Connection } from '@/types'
+-import type { ConnectionDisplayOptions, ConnectionsSnapshot } from './accessor'
 -import * as clash from './clash'
- import * as singbox from './singbox'
+-import * as singbox from './singbox'
++// Native sing-box connections state and actions.
++import { connectionAccessor as nativeAccessor } from './singbox'
  
- export type { ConnectionsSnapshot }
+-export type { ConnectionsSnapshot }
++export type { ConnectionsSnapshot } from './accessor'
++export {
++  disconnectByIdAPI,
++  disconnectAllAPI,
++  fetchConnectionsAPI,
++  getConnectionDisplayValue,
++  getConnectionVisibleSearchValues,
++} from './singbox'
  
 -const backend = () => (channel.value === Channel.Singbox ? singbox : clash)
-+const backend = () => singbox
- 
- export const disconnectByIdAPI = (id: string) => backend().disconnectByIdAPI(id)
- 
-@@ -32,6 +29,3 @@
-   keys: CONNECTIONS_TABLE_ACCESSOR_KEY[],
-   options: ConnectionDisplayOptions,
- ) => backend().getConnectionVisibleSearchValues(connection, keys, options)
+-
+-export const disconnectByIdAPI = (id: string) => backend().disconnectByIdAPI(id)
+-
+-export const disconnectAllAPI = () => backend().disconnectAllAPI()
+-
+-export const fetchConnectionsAPI = () => backend().fetchConnectionsAPI()
+-
+-// 当前后端的连接字段访问器(直接读取原始数据,不做 clash 形状化)。
+-export const connectionAccessor = () => backend().connectionAccessor
+-
+-// 动态选用当前后端的 getConnectionDisplayValue。
+-export const getConnectionDisplayValue = (
+-  connection: Connection,
+-  key: CONNECTIONS_TABLE_ACCESSOR_KEY,
+-  options: ConnectionDisplayOptions,
+-) => backend().getConnectionDisplayValue(connection, key, options)
+-
+-export const getConnectionVisibleSearchValues = (
+-  connection: Connection,
+-  keys: CONNECTIONS_TABLE_ACCESSOR_KEY[],
+-  options: ConnectionDisplayOptions,
+-) => backend().getConnectionVisibleSearchValues(connection, keys, options)
 -
 -// 连接封锁动作(Clash 专属),经 connections 域门面暴露给 view。
 -export { blockConnectionByIdAPI } from '@/api/clash'
++export const connectionAccessor = () => nativeAccessor
 --- a/src/assembly/logs/index.ts
 +++ b/src/assembly/logs/index.ts
 @@ -1,14 +1,11 @@
@@ -442,29 +466,38 @@
  import * as singbox from './singbox'
  
  export const logs = shallowRef<LogWithSeq[]>([])
-@@ -37,7 +34,7 @@
+@@ -37,15 +34,13 @@
    if (cancel) initLogs()
  })
  
 -const backend = () => (channel.value === Channel.Singbox ? singbox : clash)
-+const backend = () => singbox
- 
+-
  let cancel: (() => void) | undefined
  
+ export const initLogs = () => {
+   stopLogs()
+ 
+   const accumulator = createLogsAccumulator(logs, () => isPaused.value)
+-  const subscription = backend().subscribeLogs({ level: logLevel.value }, accumulator.push)
++  const subscription = singbox.subscribeLogs({ level: logLevel.value }, accumulator.push)
+ 
+   cancel = () => {
+     accumulator.dispose()
 --- a/src/assembly/overview/index.ts
 +++ b/src/assembly/overview/index.ts
-@@ -1,9 +1,7 @@
+@@ -1,10 +1,2 @@
 -// 组装层 · overview 门面。memory / traffic 统计流按后端类型路由,统一返回 { data, close } 流。
 -import { Channel, channel } from '@/assembly/backend'
 -import * as clash from './clash'
-+// Native sing-box overview state and actions.
- import * as singbox from './singbox'
- 
+-import * as singbox from './singbox'
+-
 -const backend = () => (channel.value === Channel.Singbox ? singbox : clash)
-+const backend = () => singbox
- 
- export const fetchMemoryAPI = <T>() => backend().fetchMemoryAPI<T>()
- 
+-
+-export const fetchMemoryAPI = <T>() => backend().fetchMemoryAPI<T>()
+-
+-export const fetchTrafficAPI = <T>() => backend().fetchTrafficAPI<T>()
++// Native sing-box overview streams.
++export { fetchMemoryAPI, fetchTrafficAPI } from './singbox'
 --- a/src/assembly/proxies/index.ts
 +++ b/src/assembly/proxies/index.ts
 @@ -1,7 +1,5 @@

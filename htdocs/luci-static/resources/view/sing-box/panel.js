@@ -4,6 +4,8 @@
 'require poll';
 'require ui';
 
+const MAX_SIZE = 65536;
+
 function method(name, params) {
   return rpc.declare({
     object: 'luci.sing-box',
@@ -48,6 +50,7 @@ const messages = {
   service_stopped: '服务已停止',
   action_unknown: '未知操作',
   directories_failed: '无法初始化面板目录',
+  flock_missing: '固件缺少 flock 命令，请启用 BusyBox flock 或安装 flock 软件包',
   logs_failed: '无法读取系统日志（logread 失败或超时）',
   request_invalid: '请求无效',
   content_invalid: '配置内容必须是字符串',
@@ -184,13 +187,13 @@ return view.extend({
 
   content() {
     if (!this.loaded) throw new Error('请先重载配置');
-    if (new Blob([this.editor.value]).size > 65536) throw new Error(messages.config_too_large);
+    if (new Blob([this.editor.value]).size > MAX_SIZE) throw new Error(messages.config_too_large);
     return this.editor.value;
   },
 
   replaceEditor(content) {
     if (typeof content !== 'string') throw new Error(messages.content_invalid);
-    if (new Blob([content]).size > 65536) throw new Error(messages.config_too_large);
+    if (new Blob([content]).size > MAX_SIZE) throw new Error(messages.config_too_large);
     if (this.editor.value !== this.savedText && !window.confirm('放弃当前未保存的修改并载入新配置？')) return false;
     this.editor.value = content;
     this.updateDirty();
@@ -207,6 +210,7 @@ return view.extend({
   async importFile(file) {
     if (!file) return;
     if (!/\.json$/i.test(file.name)) throw new Error('请选择 JSON 配置文件');
+    if (file.size > MAX_SIZE) throw new Error(messages.config_too_large);
     const content = await file.text();
     if (this.replaceEditor(content)) this.notify('本地配置已载入编辑器，尚未保存。');
   },

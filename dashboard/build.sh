@@ -7,7 +7,18 @@ SHA256=7756b2940ade0ccb7541cb1ae79a99d3a08a43507c0d6dfd86fd7713444d1e06
 BUILD_ROOT="$PROJECT_DIR/.dashboard-build"
 ARCHIVE="$BUILD_ROOT/zashboard-$VERSION.tar.gz"
 OUTPUT="$PROJECT_DIR/htdocs/luci-static/sing-box/dashboard"
+command -v flock >/dev/null || {
+  echo "Install flock on the build host before building the dashboard" >&2
+  exit 1
+}
 mkdir -p "$BUILD_ROOT"
+# Hold one kernel lock through download, output replacement and EXIT cleanup.
+# Keep this file in place so every invocation locks the same inode.
+exec 9> "$BUILD_ROOT/build.lock"
+flock -n 9 || {
+  echo "Cannot acquire dashboard build lock; another build may be running" >&2
+  exit 1
+}
 BUILD_DIR=''
 cleanup() {
   cd "$PROJECT_DIR"

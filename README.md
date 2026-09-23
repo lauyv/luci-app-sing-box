@@ -33,6 +33,8 @@ opkg install /tmp/luci-app-sing-box_*.ipk
 
 发布的 APK 未签名，安装时需要 `--allow-untrusted`。依赖为 `luci-base`、`sing-box`、`rpcd`、`jshn`、`jsonfilter` 和 `uclient-fetch`，由设备匹配的软件源安装。
 
+操作锁使用固件自带的 `flock` 命令，不额外依赖独立的 `flock` 软件包。若定制固件裁掉了该命令，面板会明确提示缺失，需要启用 BusyBox flock 或补装对应软件包。
+
 重新登录 LuCI，进入 **服务 → sing-box**。升级后如仍显示旧界面，请强制刷新浏览器。
 
 ## 运行面板
@@ -94,7 +96,7 @@ config sing-box 'main'
 | 保存并应用  | 保存、校验，通过后重启服务                               |
 | 重载配置    | 从 `conffile` 重新读取内容；有未保存修改时先确认是否放弃 |
 
-配置大小上限为 **64 KiB**，按 UTF-8 字节数计算。格式化使用 `JSON.parse` 和 `JSON.stringify`，不调用 `sing-box format`，输入必须是标准 JSON。
+配置大小上限为 **64 KiB**，按 UTF-8 字节数计算。本地导入在读取文件前检查大小；在线下载最多读取上限加 1 字节，超限立即终止，不依赖服务器的 Content-Length。格式化使用 `JSON.parse` 和 `JSON.stringify`，不调用 `sing-box format`，输入必须是标准 JSON。
 
 校验使用已安装的 sing-box 内核及服务工作目录。“校验”传入临时文件路径，完成后清理；“保存并应用”传入正式配置路径：
 
@@ -191,7 +193,7 @@ make package/luci-app-sing-box/compile V=s
 - **页面没有出现**：重启 `rpcd` 后重新登录 LuCI。
 - **配置校验失败**：根据页面显示的 sing-box 错误修改 JSON，确认 `conffile`、`workdir` 及引用文件路径。
 - **系统日志为空**：检查启动脚本的日志收集设置，以及 JSON 中的 `log.output` 和 `log.disabled`。
-- **操作长时间未结束**：检查 `/tmp/sing-box-panel/lock/pid` 对应的后台进程。确认进程已退出后，再处理锁和临时任务数据。
+- **操作长时间未结束**：检查后台 worker 和系统日志。操作使用 `flock` 内核锁，进程退出后自动释放；下次状态刷新会将遗留的排队或运行任务标记为中断。不要删除 `/tmp/sing-box-panel/operation.lock`，文件存在不代表正在占锁。
 
 临时任务数据位于 `/tmp/sing-box-panel/`，设备重启后会清除。
 
