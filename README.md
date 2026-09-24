@@ -1,25 +1,76 @@
-# luci-app-sing-box
+# sing-box for LuCI
 
-用于 OpenWrt 的 sing-box LuCI 管理面板，支持 JSON 配置编辑、服务控制、系统日志查看。
+适用于 OpenWrt 的 sing-box 管理页面，可在 LuCI 中编辑 JSON 配置、校验并应用配置、控制服务和查看系统日志。项目还提供独立打开的裁剪版 zashboard，用于查看概览、代理、连接和实时日志。
 
-## 功能
+本项目是 sing-box 的管理界面。路由规则、入站、出站和 API 监听地址仍由 sing-box 配置文件决定；安装本插件不会自动创建代理配置或开放 API 端口。
 
-- 查看 sing-box 版本、运行状态、PID 和配置路径。
-- 启动、停止、重启服务，设置开机启动。
-- 从在线 URL 拉取或上传本地 JSON 配置，并支持编辑、格式化和校验。
-- 可仅保存配置文件，也可保存并应用后重启服务。
-- 直接保存到 `conffile`，调用 `sing-box check` 校验并应用。
-- 查看最近 200 行系统日志，在日志页每 5 秒自动刷新。
-- 面板文案使用简体中文，LuCI 通用控件遵循系统语言。
-- 使用 LuCI 官方标签页、复选框、通知和按钮样式，布局适配默认主题与 Argon。
-- 清理已保存配置使用的缓存文件，可选择完成后启动服务。
-- 内置裁剪版 zashboard v3.22.0，提供概览、代理、连接、实时日志，可通过独立页面访问。
+## 快速设置
+
+安装后重新登录 LuCI，进入 **服务 → sing-box**，按以下顺序操作：
+
+1. 在**配置**页上传本地 JSON、从 URL 拉取配置，或直接编辑。导入后先确认页面内容，再点击**校验**；导入本身不会保存到路由器。
+2. 点击**保存并应用**。页面会把内容写入 UCI `conffile` 指向的文件，使用已安装的 sing-box 校验，然后重启服务。也可以只点**保存**，稍后再应用。
+3. 在**服务**页查看运行状态、配置路径和内核版本；按需开启**开机启动**。
+4. 服务启动后，点击**运行面板 → 独立打开**，填写浏览器可以访问的 sing-box API 地址、端口和密钥。独立面板不会自动读取密钥。
+
+配置文件最大为 **64 KiB**，按 UTF-8 字节数计算。**格式化 JSON** 只修改编辑框；**校验**使用临时文件，不保存也不重启。**保存并应用**会先保存再校验；如果校验失败，已保存的文件仍会保留，服务不会重启。请根据页面显示的错误修改后重新应用。
+
+### 服务配置
+
+面板读取 `/etc/config/sing-box` 中的 `main` 节，例如：
+
+```uci
+config sing-box 'main'
+        option enabled '1'
+        option conffile '/etc/sing-box/config.json'
+        option workdir '/usr/share/sing-box'
+        option log_stderr '1'
+```
+
+| 选项 | 用途 |
+| ---- | ---- |
+| `enabled` | 服务启动开关；启动、重启或应用时设为 `1` |
+| `conffile` | 面板直接读写的 JSON 文件，须使用绝对路径 |
+| `workdir` | sing-box 工作目录，须使用绝对路径 |
+| `log_stderr` | stderr 日志收集选项，实际效果取决于设备上的启动脚本 |
+| `user` | 面板新建配置文件时使用的所有者；未设置时按 root 处理 |
+
+面板使用 `/usr/bin/sing-box` 和 `/etc/init.d/sing-box`。配置文件父目录须已存在；保存现有文件会保留其所有者和权限，新建文件权限为 `0600`。**开机启动**同时启用 init 启动链接并设置 `enabled=1`；取消勾选只禁用启动链接。**停止**不会修改开机启动设置。
 
 ## 安装
 
-同时提供适用于新版本 OpenWrt 的 APK v3 包和适用于 `opkg` 系统的 IPK 包。设备需提供兼容的 LuCI、rpcd 和 sing-box 服务接口。项目不限定 OpenWrt 版本号，具体固件的兼容性需在设备上验证。
+### 通过 apk-repository 软件源安装
 
-从 [Releases](https://github.com/lauyv/luci-app-sing-box/releases) 下载安装包，上传到路由器的 `/tmp` 目录：
+[lauyv/apk-repository](https://github.com/lauyv/apk-repository) 提供签名的 `sing-box` 和 `luci-app-sing-box` APK，适用于 OpenWrt 25.12 的 `aarch64_generic` 和 `x86_64`。其他架构及 `opkg` 系统请使用下方的安装方式。先在路由器上运行 `cat /etc/apk/arch`，确认设备架构。
+
+1. 通过 SSH 下载公钥并显示指纹：
+
+   ```sh
+   wget -O /tmp/apk-repository.pem 'https://lauyv.github.io/apk-repository/apk/apk-repository.pem'
+   sha256sum /tmp/apk-repository.pem
+   ```
+
+   将输出与维护者提供的可信指纹核对，确认一致后安装公钥：
+
+   ```sh
+   mkdir -p /etc/apk/keys
+   mv /tmp/apk-repository.pem /etc/apk/keys/apk-repository.pem
+   ```
+
+2. 在 LuCI 的 **系统 → 软件包 → 配置** 中打开 `/etc/apk/repositories.d/customfeeds.list`，保留原有内容，另起一行添加与设备架构对应的地址：
+
+   | 架构 | `latest` 软件源地址 |
+   | ---- | ----------------- |
+   | `aarch64_generic` | `https://lauyv.github.io/apk-repository/apk/latest/aarch64_generic/packages.adb` |
+   | `x86_64` | `https://lauyv.github.io/apk-repository/apk/latest/x86_64/packages.adb` |
+
+3. 保存配置并**更新列表**，在 **系统 → 软件包 → 可用** 中搜索 `luci-app-sing-box`，核对版本和来源后安装。保留系统官方软件源，以便安装其他依赖。
+
+`latest` 包含上游预发布版；只需要正式版时，把地址中的 `latest` 改为 `stable`。同一时间只添加一个本仓库通道。首次订阅、从其他来源切换软件包及更新的完整步骤见 [apk-repository README](https://github.com/lauyv/apk-repository#readme)。
+
+### 安装 GitHub Release 软件包
+
+[Releases](https://github.com/lauyv/luci-app-sing-box/releases) 提供未签名的 APK 和 IPK。APK 面向兼容的 `apk` 系统，IPK 面向兼容的 `opkg` 系统；具体固件的兼容性需在设备上验证。把安装包复制到路由器的 `/tmp` 后，执行对应命令：
 
 ```sh
 # APK 系统
@@ -31,183 +82,59 @@ opkg install /tmp/luci-app-sing-box_*.ipk
 /etc/init.d/rpcd restart
 ```
 
-发布的 APK 未签名，安装时需要 `--allow-untrusted`。依赖为 `luci-base`、`sing-box`、`rpcd`、`jshn`、`jsonfilter` 和 `uclient-fetch`，由设备匹配的软件源安装。
+依赖包括 `luci-base`、`sing-box`、`rpcd`、`jshn`、`jsonfilter` 和 `uclient-fetch`，由设备匹配的软件源安装。操作锁使用系统自带的 `flock` 命令；精简固件若未提供该命令，需要启用 BusyBox flock 或安装对应软件包。安装后重新登录 LuCI；升级后若仍显示旧界面，请强制刷新浏览器。
 
-操作锁使用固件自带的 `flock` 命令，不额外依赖独立的 `flock` 软件包。若定制固件裁掉了该命令，面板会明确提示缺失，需要启用 BusyBox flock 或补装对应软件包。
+### 在固件构建树或 SDK 中编译
 
-重新登录 LuCI，进入 **服务 → sing-box**。升级后如仍显示旧界面，请强制刷新浏览器。
-
-## 运行面板
-
-裁剪版 zashboard 仅保留概览、代理、连接、日志四页，以及后端连接和页面内显示设置。仅支持 sing-box 原生 API，界面语言提供简体中文和英文。概览页不包含连接拓扑、规则命中统计和提供商流量概览。
-
-可在 LuCI 的 **服务 → sing-box → 服务** 页面点击 **运行面板 → 独立打开**，也可直接访问 `http://路由器地址/luci-static/sing-box/dashboard/index.html`。运行面板不再内嵌到 LuCI。首次使用需填写浏览器可访问的 API 地址、端口和密钥。静态页面通常不要求 LuCI 登录，数据及操作由 sing-box API 独立认证，LuCI 的只读权限不适用于该 API。面板不会自动读取配置中的密钥。
-
-连接信息（含密钥）保存在当前浏览器的 localStorage。API 跨源访问需要相应 CORS 配置；HTTPS 页面需使用 HTTPS API。插件不自动修改 sing-box 配置、配置反向代理或开放端口。
-
-运行面板的日志是 API 实时日志；LuCI 的 **系统日志**仍通过 `logread` 查看启动错误。sing-box 停止时，静态页面仍可访问，但无法获取运行数据。
-
-面板固定版本，使用系统正文字体，不依赖字体 CDN；升级随插件发布，不提供上游自更新入口。构建与维护说明见 [dashboard/README.md](dashboard/README.md)。
-
-## sing-box 服务配置
-
-面板使用以下路径：
-
-```text
-/usr/bin/sing-box
-/etc/init.d/sing-box
-/etc/config/sing-box
-```
-
-`/etc/config/sing-box` 示例：
-
-```uci
-config sing-box 'main'
-        option enabled '1'
-        option conffile '/etc/sing-box/config.json'
-        option workdir '/usr/share/sing-box'
-        option log_stderr '1'
-```
-
-| 选项         | 用途                                               |
-| ------------ | -------------------------------------------------- |
-| `enabled`    | 服务启动开关，启动、重启、应用或开启自启时设为 `1` |
-| `conffile`   | 面板直接读写的 JSON 配置文件，使用绝对路径         |
-| `workdir`    | sing-box 工作目录，默认 `/usr/share/sing-box`      |
-| `log_stderr` | stderr 日志收集选项，实际行为由设备启动脚本决定    |
-| `user`       | 面板用于指定新建配置文件所有者的用户选项           |
-
-未配置 `user` 时，面板按 root 处理新建配置文件的所有者。服务实际运行用户由已安装的启动脚本决定。
-
-配置文件的父目录需要已存在，配置文件应为普通文件。保存现有文件时保留其所有者和权限，新建文件的权限为 0600。
-
-**开机启动**启用 init 服务启动链接，并将 `enabled` 设为 `1`；取消勾选只禁用启动链接。**停止**停止当前服务，不修改开机启动设置。停止命令成功返回后，最多等待 10 秒确认进程退出。
-
-配置路径或工作目录异常时，仍可停止服务、查看系统日志。只读账号可以查看状态、重载和复制配置、查看日志；编辑、校验和服务控制均不可用。
-
-操作成功提示在约 4.5 秒后自动收起；错误提示可手动关闭。重新进入页面不会再次展示历史成功提示。
-
-## 配置使用
-
-| 操作        | 行为                                                     |
-| ----------- | -------------------------------------------------------- |
-| 格式化 JSON | 浏览器解析 JSON，以 2 个空格缩进重新输出，只修改编辑器   |
-| 校验        | 通过临时文件校验编辑器内容，不保存、不重启               |
-| 保存并应用  | 保存、校验，通过后重启服务                               |
-| 重载配置    | 从 `conffile` 重新读取内容；有未保存修改时先确认是否放弃 |
-
-配置大小上限为 **64 KiB**，按 UTF-8 字节数计算。本地导入在读取文件前检查大小；在线下载最多读取上限加 1 字节，超限立即终止，不依赖服务器的 Content-Length。格式化使用 `JSON.parse` 和 `JSON.stringify`，不调用 `sing-box format`，输入必须是标准 JSON。
-
-校验使用已安装的 sing-box 内核及服务工作目录。“校验”传入临时文件路径，完成后清理；“保存并应用”传入正式配置路径：
+先在本仓库运行 `bash dashboard/build.sh` 生成运行面板静态资源；构建主机需要 Node.js 24、pnpm 11.20.0 及脚本所列工具，路由器不需要 Node.js。然后在 Linux 上将本项目放入与目标固件匹配的 OpenWrt 源码树或 SDK 的 `package/luci-app-sing-box`，打开构建菜单：
 
 ```sh
-sing-box check -c <待校验文件> -D <workdir>
-```
-
-单独校验不会改动正式配置或服务状态。“保存并应用”先保存再校验；校验失败时显示内核错误，已保存的文件保留，服务不重启。修改错误后可再次保存并应用。
-
-保存前会检查文件版本。如果其他窗口或 SSH 已修改文件，页面会提示重新加载，避免覆盖外部修改。
-
-### 配置写入
-
-配置直接写入 UCI 的 `conffile` 路径，采用同目录临时文件加原子替换，完成后清理临时文件。
-
-保存并应用后的启动检查要求服务 PID 在约 3 秒内保持存活且不变。启动失败时显示错误，已保存配置保留，需要修改后重新应用。
-
-## 清理缓存
-
-在 **服务 → 维护缓存 → 清理缓存** 中确认后执行。后端读取已保存配置的 `experimental.cache_file`：仅在 `enabled: true` 时提供操作，`path` 留空时使用 `cache.db`，相对路径按 UCI 的 `workdir` 解析。
-
-弹窗显示工作目录和缓存文件的实际路径。操作先停止服务并确认所有实例的进程已退出，再删除该缓存文件，**不备份、不创建空数据库、不删除工作目录中的其他文件**。“完成后启动服务”默认跟随打开弹窗时的运行状态，可手动更改；新缓存由 sing-box 启动时生成。启动失败会显示错误并尝试停止服务，旧缓存无法恢复。自启设置保持不变。
-
-第一版仅支持 `/usr/share/sing-box`、`/var/lib/sing-box`、`/tmp/sing-box` 三个专用 workdir，且目录必须存在、路径各级不能包含符号链接。部分 OpenWrt 的 `/var` 是符号链接，此时 `/var/lib/sing-box` 会被拒绝。缓存必须是其中的普通文件，路径只能使用英文字母、数字、`_`、`.`、`-`、`/`；配置文件、软硬链接、工作目录外路径及涉及挂载点的路径均拒绝操作。
-
-缓存未启用或不存在时无需清理。确认后如果配置、缓存路径或文件身份发生变化，操作会被拒绝，需要重新打开弹窗。仅写权限账号可执行，使用与保存、服务控制相同的操作锁。
-
-缓存安全检查使用系统自带的 `ls` 和 `/proc/self/mountinfo` 获取硬链接数及文件身份，无需安装 `stat` 或 `coreutils-stat`。读取检查信息失败时会单独提示，不再误报为缓存路径不安全。
-
-## 日志
-
-日志页通过 `logread` 读取 sing-box 系统日志，显示最近 200 行，最多 24 KiB。进入日志页立即读取一次，停留在日志页时每 5 秒更新；可通过右上角 LuCI 刷新开关暂停或恢复自动更新。
-
-- 系统日志是否收集 sing-box 输出，取决于设备上的服务启动脚本；部分脚本使用 `log_stderr` 选项。
-- JSON 中设置 `log.output` 时，页面显示文件去向；日志窗口显示的仍是系统日志。
-- JSON 中设置 `log.disabled: true` 时，页面显示日志关闭提示。
-
-面板显示日志时过滤 ANSI 颜色码。日志在内容框内滚动，并显示最近更新时间。右上角 LuCI 刷新开关同时控制服务状态与后台操作结果的定时更新。
-
-## GitHub Actions 打包发布
-
-工作流：[release.yml](.github/workflows/release.yml)。
-
-在 **Ubuntu 26.04** 上直接生成供 OpenWrt 使用的 APK v3 和 IPK 包，无需下载 SDK、准备 feeds 或选择 CPU 架构。
-
-1. 将项目提交到 GitHub，保持 `Makefile`、`htdocs`、`root`、`dashboard` 和 `.github` 位于仓库根目录。
-2. 进入 **Actions → Release → Run workflow**。
-3. 选择构建分支，填写新标签，例如 `v0.1.0`。
-4. 按需勾选 `prerelease`，然后运行工作流。
-
-缓存未命中时下载并编译固定版本的 APK 打包工具，缓存命中时复用。发布时先构建裁剪版 zashboard（Node.js 24、pnpm 11.20.0），再复制同一份包内容：使用 `apk mkpkg` 生成 APK，并使用标准 `ar`、tar 和 gzip 结构生成 IPK。两种包都会上传到 Release，安装和升级脚本负责刷新 LuCI 缓存。
-
-版本号取标签去掉 `v` 的部分，标签格式为 `v数字.数字.数字`；包修订号和运行依赖取自 `Makefile`。
-
-Release 标题直接使用版本标签（如 `v0.1.0`）。说明按时间顺序列出上次发布安装包后到本次构建的完整提交信息，再附上两种包格式的安装命令。基准为最近发布且包含本插件 APK 或 IPK 的 Release（包括预发布，不含草稿）；首次发布列出当前构建的全部提交历史。
-
-发布文件（`PKG_RELEASE:=1`）：
-
-```text
-luci-app-sing-box-<版本>-r1.apk
-luci-app-sing-box_<版本>-r1_all.ipk
-```
-
-APK 架构为 `noarch`，IPK 架构为 `all`；面板自身不含架构相关的二进制文件。sing-box 内核和其他运行依赖由设备的软件源提供，设备需要可用且匹配固件的软件源。架构无关不代表兼容所有固件；面板依赖 OpenWrt 的 UCI、ubus、procd 和 LuCI 运行环境。
-
-发布使用仓库自带的 `GITHUB_TOKEN`。请填写尚未存在的标签；若发布中断后已有同名标签或 Release 草稿，处理残留后重试，或使用新版本号。
-
-APK 和 IPK 直接上传到 Release，构建日志在 Actions 运行页面查看。工作流包含面板源码摘要校验、Vue/TypeScript 检查与前端构建，不运行设备测试或 lint。
-
-## 从源码构建
-
-先在本仓库执行 `bash dashboard/build.sh` 生成面板静态资源（需要 Node.js 24、pnpm 11.20.0）。然后在 Linux 上使用与目标固件匹配的 OpenWrt SDK 或源码树，将项目放到 `package/luci-app-sing-box`：
-
-```sh
-./scripts/feeds update -a
-./scripts/feeds install -a
 make menuconfig
 ```
 
-选择：
-
-- **LuCI → Applications → luci-app-sing-box**
-
-也可通过 `LUCI_SING_BOX_VERSION` 指定源码构建的版本号。保存配置后构建：
+在菜单中选择 **LuCI → Applications → luci-app-sing-box**，保存后编译：
 
 ```sh
 make package/luci-app-sing-box/compile V=s
 ```
 
-生成的安装包位于 `bin/packages/` 下，包格式由所用 SDK 或源码树决定；GitHub Releases 同时提供 APK 和 IPK 包。
+生成的包位于 `bin/packages/` 下；包格式由源码树或 SDK 决定。构建运行面板的详细要求见 [dashboard/README.md](dashboard/README.md)。
 
-## 故障排查
+## 运行面板
 
-- **页面没有出现**：重启 `rpcd` 后重新登录 LuCI。
-- **配置校验失败**：根据页面显示的 sing-box 错误修改 JSON，确认 `conffile`、`workdir` 及引用文件路径。
-- **系统日志为空**：检查启动脚本的日志收集设置，以及 JSON 中的 `log.output` 和 `log.disabled`。
-- **操作长时间未结束**：检查后台 worker 和系统日志。操作使用 `flock` 内核锁，进程退出后自动释放；下次状态刷新会将遗留的排队或运行任务标记为中断。不要删除 `/tmp/sing-box-panel/operation.lock`，文件存在不代表正在占锁。
+独立页面地址为 `http://路由器地址/luci-static/sing-box/dashboard/index.html`，也可以从 LuCI 的**服务**页打开。它提供概览、代理、连接和实时日志四页，仅连接 sing-box 原生 API。页面是静态资源，通常无需 LuCI 登录；数据和操作由 sing-box API 的密钥独立认证。LuCI 的只读权限不适用于该 API。
 
-临时任务数据位于 `/tmp/sing-box-panel/`，设备重启后会清除。
+API 地址必须能从**当前浏览器**访问。跨源访问需要相应 CORS 设置；通过 HTTPS 打开的页面需要可访问的 HTTPS API。连接地址和密钥保存在当前浏览器的 localStorage；清除站点数据或在面板中删除连接可移除这些信息。sing-box 停止时页面仍能打开，但无法取得运行数据。
 
-## 参考
+运行面板中的日志来自 API；LuCI 的**系统日志**通过 `logread` 读取启动和运行日志。面板固定使用裁剪版 zashboard v3.22.0，随插件更新，不提供上游自更新入口。裁剪内容与构建方式见 [dashboard/README.md](dashboard/README.md)。
 
-- [sing-box 配置文档](https://sing-box.sagernet.org/configuration/)
-- [sing-box 上游 OpenWrt 启动脚本](https://github.com/SagerNet/sing-box/blob/testing/release/config/openwrt.init)
-- [OpenWrt packages feed 启动脚本](https://github.com/openwrt/packages/blob/master/net/sing-box/files/sing-box.init)
-- [LuCI 应用示例](https://github.com/openwrt/luci/tree/master/applications/luci-app-example)
+## 清理缓存
+
+在 **服务 → 维护缓存 → 清理缓存** 中确认后执行。面板只读取已保存配置的 `experimental.cache_file`，且仅在 `enabled: true` 时提供操作；路径留空时使用 `cache.db`，相对路径按 UCI `workdir` 解析。
+
+弹窗会显示工作目录和缓存文件的实际路径。操作先停止服务并确认进程退出，再删除该缓存文件；**不会备份旧缓存**。可选择完成后启动服务，新缓存由 sing-box 启动时生成。若启动失败，旧缓存无法恢复。
+
+为避免误删，面板只接受 `/usr/share/sing-box`、`/var/lib/sing-box`、`/tmp/sing-box` 三个已存在且路径各级没有符号链接的专用工作目录。缓存须是目录内的普通文件，不能是配置文件、链接或挂载点。部分 OpenWrt 的 `/var` 是符号链接，此时 `/var/lib/sing-box` 会被拒绝。缓存不存在或配置未启用缓存时无需清理。
+
+## 运行与排查
+
+**系统日志**页显示最近 200 行 sing-box 日志，最多 24 KiB；停留在该页时每 5 秒刷新，可通过 LuCI 刷新开关暂停。能否收集到 sing-box 输出取决于设备启动脚本及日志配置。如果 JSON 设置了 `log.output`，日志可能写入文件；设置 `log.disabled: true` 时，sing-box 日志会关闭。
+
+```sh
+/etc/init.d/sing-box status
+uci show sing-box.main
+sing-box check -c /etc/sing-box/config.json -D /usr/share/sing-box
+logread -e sing-box
+```
+
+最后两条命令中的配置路径和工作目录应按本机 UCI 设置调整。页面校验同样使用已安装的 sing-box 内核及工作目录。若页面提示配置已变化，先**重载配置**，再继续编辑；此提示用于避免覆盖其他窗口或 SSH 写入的内容。
+
+配置路径或工作目录异常时，仍可停止服务并查看日志。只读账号可查看状态、配置和日志，不能编辑、校验或控制服务。临时任务数据位于 `/tmp/sing-box-panel/`，设备重启后清除；操作锁由进程退出时自动释放，不要因锁文件存在而手动删除它。
 
 ## 致谢
 
-感谢 [Zephyruso/zashboard](https://github.com/Zephyruso/zashboard) 的作者与贡献者。本项目的运行面板基于 zashboard v3.22.0 裁剪和适配，保留上游 MIT 许可证；具体改动与构建方式见 [dashboard/README.md](dashboard/README.md)。
+感谢 [Zephyruso/zashboard](https://github.com/Zephyruso/zashboard) 的作者和贡献者。本项目的运行面板基于 zashboard v3.22.0 裁剪和适配；具体改动与构建方式见 [dashboard/README.md](dashboard/README.md)。
 
 ## 许可证
 
-[MIT](LICENSE)
+本项目采用 [MIT 许可证](LICENSE)。运行面板保留 zashboard 上游的 MIT 许可证。
