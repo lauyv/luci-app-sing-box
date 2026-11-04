@@ -12,6 +12,17 @@ reply() {
 	json_dump
 }
 
+queue_worker() {
+	JOB_ID="$(date +%s)-$$"
+	job queued operation_queued
+	/usr/libexec/sing-box-panel-worker "$1" "${2:-}" "$JOB_ID" </dev/null >/dev/null 2>&1 &
+	json_init
+	json_add_boolean ok 1
+	json_add_string code operation_queued
+	json_add_string id "$JOB_ID"
+	json_dump
+}
+
 case "$1" in
 	list)
 		printf '%s\n' '{"status":{},"read":{},"logs":{},"cache":{},"fetch":{"url":"String"},"check":{"content":"String"},"save":{"content":"String","revision":"String"},"action":{"name":"String","revision":"String"},"autostart":{"enabled":true}}'
@@ -42,7 +53,7 @@ case "$2" in
 		settings || config_error="$ERROR"
 		pid=$(running_pid)
 		boot=0
-		"$INIT" enabled >/dev/null 2>&1 && [ "$(uci -q get sing-box.main.enabled)" = 1 ] && boot=1
+		"$INIT" enabled >/dev/null 2>&1 && boot=1
 		busy=0
 		if lock; then recover_job; unlock; else busy=1; fi
 		job_data=$(cat "$RUN/job.json" 2>/dev/null)
@@ -139,44 +150,31 @@ case "$2" in
 		lock || { reply 0 operation_busy; exit 0; }
 		trap 'unlock' EXIT
 		settings || { reply 0 "$ERROR"; exit 0; }
-		if [ "$2" = check ]; then
-			trap 'rm -f "$RUN/validation.json"; unlock' EXIT
-			printf '%s' "$content" > "$RUN/validation.json" || { reply 0 check_prepare_failed; exit 0; }
-			job queued operation_queued
-			/usr/libexec/sing-box-panel-worker validate </dev/null >/dev/null 2>&1 &
-			trap - EXIT
-			reply 1 operation_queued
-			exit 0
+		if [ "$2" = save ] && { [ -z "$revision" ] || [ "$revision" != "$(config_revision)" ]; }; then
+			reply 0 config_changed; exit 0
 		fi
-		save_config "$content" "$revision" || { reply 0 "$ERROR"; exit 0; }
-		json_init
-		json_add_boolean ok 1
-		json_add_string code config_saved
-		json_add_string revision "$(config_revision)"
-		json_dump;;
+		trap 'rm -f "$RUN/validation.json"; unlock' EXIT
+		printf '%s' "$content" > "$RUN/validation.json" || { reply 0 check_prepare_failed; exit 0; }
+		if [ "$2" = check ]; then queue_worker validate; else queue_worker save "$revision"; fi
+		trap - EXIT
+		exit 0;;
 	action)
 		name='' revision=''
 		payload=$(head -c 1024)
 		json_load "$payload" 2>/dev/null || { reply 0 'request_invalid'; exit 0; }
 		json_get_var name name
 		json_get_var revision revision
-		case "$name" in apply|start|stop|restart|cache_reset|cache_reset_start) ;; *) reply 0 'action_unknown'; exit 0;; esac
+		case "$name" in start|stop|cache_reset|cache_reset_start) ;; *) reply 0 'action_unknown'; exit 0;; esac
 		lock || { reply 0 'operation_busy'; exit 0; }
 		action_settings "$name" || { unlock; reply 0 "$ERROR"; exit 0; }
-		case "$name" in apply)
-			actual=$(config_revision)
-			if [ -z "$revision" ] || [ "$revision" != "$actual" ]; then
-				unlock; reply 0 config_changed; exit 0
-			fi;;
+		case "$name" in
 		cache_reset|cache_reset_start)
 			cache_settings || { unlock; reply 0 "$ERROR"; exit 0; }
 			if [ -z "$revision" ] || [ "$revision" != "$CACHE_TOKEN" ]; then
 				unlock; reply 0 cache_changed; exit 0
 			fi;;
 		esac
-		job queued operation_queued
-		/usr/libexec/sing-box-panel-worker "$name" "$revision" </dev/null >/dev/null 2>&1 &
-		reply 1 'operation_queued';;
+		queue_worker "$name" "$revision";;
 	autostart)
 		kind='' enabled=''
 		payload=$(head -c 1024)
@@ -186,17 +184,10 @@ case "$2" in
 		[ "$kind" = boolean ] || { reply 0 'enabled_invalid'; exit 0; }
 		lock || { reply 0 'operation_busy'; exit 0; }
 		trap 'unlock' EXIT
-		init_action=disable
-		if [ "$enabled" = 1 ]; then
-			if ! { uci set sing-box.main.enabled=1 && uci commit sing-box; }; then
-				reply 0 'autostart_failed'; exit 0
-			fi
-			init_action=enable
-		fi
-		if "$INIT" "$init_action" > "$RUN/service.log" 2>&1; then
+		if set_autostart "$enabled"; then
 			reply 1 'autostart_updated'
 		else
-			reply 0 'autostart_failed'
+			reply 0 "$ERROR"
 		fi;;
 	*) reply 0 'method_unknown';;
 esac

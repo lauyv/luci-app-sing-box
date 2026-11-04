@@ -4,7 +4,7 @@
   align-items: center;
   gap: 0.5em;
 }
-#sing-box-panel .cbi-value:has(#sing-box-autostart) {
+#sing-box-panel .cbi-value:has(#sing-box-autostart, #sing-box-running) {
   display: flex;
   align-items: center;
 }

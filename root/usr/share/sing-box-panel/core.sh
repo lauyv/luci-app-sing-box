@@ -61,6 +61,7 @@ recover_job() {
 	# Called with the lock held, so no worker can still own these temporary files.
 	if json_load "$(cat "$RUN/job.json" 2>/dev/null)" 2>/dev/null; then
 		json_get_var state state
+		json_get_var JOB_ID id
 		case "$state" in queued|running) job error operation_interrupted;; esac
 	fi
 	rm -f "$RUN/check.log" "$RUN/service.log" "$RUN/validation.json"
@@ -68,6 +69,8 @@ recover_job() {
 
 job() {
 	json_init
+	json_add_string id "${JOB_ID:-}"
+	json_add_string revision "${SAVE_REVISION:-}"
 	json_add_string state "$1"
 	json_add_string code "$2"
 	json_add_string argument "${4:-${ERROR_ARG:-}}"
@@ -303,7 +306,7 @@ check_config() {
 
 config_revision() {
 	# Include the path so a UCI path change invalidates an open editor too.
-	{ printf '%s\n' "$CONFIG"; if [ -f "$CONFIG" ]; then sha256sum "$CONFIG"; else printf 'missing\n'; fi; } |
+	{ printf '%s\n' "$CONFIG" "$WORKDIR" "$SERVICE_USER"; if [ -f "$CONFIG" ]; then sha256sum "$CONFIG"; else printf 'missing\n'; fi; } |
 		sha256sum | cut -d ' ' -f 1
 }
 
@@ -324,20 +327,53 @@ stage_config() {
 }
 
 save_config() {
-	local content="$1" expected="$2" tmp
+	local content="$1" expected="$2" original_config="$CONFIG" original_workdir="$WORKDIR" original_user="$SERVICE_USER" pid
+	SAVE_REVISION=''
 	[ -n "$expected" ] && [ "$expected" = "$(config_revision)" ] || {
 		ERROR=config_changed; return 1;
 	}
-	tmp=$(stage_config "$content") || { ERROR=config_save_failed; return 1; }
-	if [ -f "$CONFIG" ] && cmp -s "$tmp" "$CONFIG"; then
-		rm -f "$tmp"
+	# Keep the candidate beside the destination for an atomic rename. The worker
+	# owns this path until commit and removes it on failure or interruption.
+	SAVE_CANDIDATE=$(stage_config "$content") || { ERROR=config_save_failed; return 1; }
+	if ! check_config "$SAVE_CANDIDATE"; then
+		rm -f "$SAVE_CANDIDATE"; SAVE_CANDIDATE=''
+		return 1
+	fi
+	# SSH and UCI edits do not take the panel lock. Recheck after validation.
+	if ! settings || [ "$CONFIG" != "$original_config" ] ||
+		[ "$WORKDIR" != "$original_workdir" ] || [ "$SERVICE_USER" != "$original_user" ] ||
+		[ "$expected" != "$(config_revision)" ]; then
+		rm -f "$SAVE_CANDIDATE"; SAVE_CANDIDATE=''
+		ERROR=config_changed; return 1
+	fi
+	if [ -f "$CONFIG" ] && cmp -s "$SAVE_CANDIDATE" "$CONFIG"; then
+		rm -f "$SAVE_CANDIDATE"; SAVE_CANDIDATE=''
+		SAVE_REVISION="$expected"
+		SAVE_CODE=config_unchanged
 		return 0
 	fi
-	mv -f "$tmp" "$CONFIG" || { rm -f "$tmp"; ERROR=config_save_failed; return 1; }
+	pid=$(running_pid)
+	# Confirm procd is available before committing a configuration whose
+	# application depends on the current service state.
+	ubus call service list '{"name":"sing-box"}' >/dev/null 2>&1 || {
+		ERROR=service_status_failed; return 1;
+	}
+	mv -f "$SAVE_CANDIDATE" "$CONFIG" || { ERROR=config_save_failed; return 1; }
+	SAVE_CANDIDATE=''
+	SAVE_REVISION=$(config_revision)
+	SAVE_CODE=config_saved
+	if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+		run_service restart apply_failed || return 1;
+		SAVE_CODE=config_applied
+	fi
 }
 
 start_service() {
 	check_config "$CONFIG" || return 1
+	run_service "$1" "$2"
+}
+
+run_service() {
 	if uci set sing-box.main.enabled=1 && uci commit sing-box && service_do "$1" && healthy; then
 		return 0
 	fi
@@ -346,25 +382,39 @@ start_service() {
 	return 1
 }
 
+set_autostart() {
+	local init_action=disable
+	if [ "$1" = 1 ]; then
+		# The init script needs this gate even when merely enabling boot.
+		uci set sing-box.main.enabled=1 && uci commit sing-box || {
+			ERROR=autostart_failed; return 1;
+		}
+		init_action=enable
+	fi
+	service_do "$init_action" || { ERROR=autostart_failed; return 1; }
+}
+
 worker() {
-	local action="$1" expected="${2:-}"
+	local action="$1" expected="${2:-}" content
+	JOB_ID="${3:-}"
+	SAVE_REVISION=''
+	SAVE_CANDIDATE=''
 	# Refuse direct invocation without the descriptor inherited from rpcd.
 	flock -n 9 || return 1
 	trap 'worker_exit' EXIT
 	trap 'job error operation_interrupted; exit 1' HUP INT TERM
 	job running operation_running '' "$action"
 	action_settings "$action" || { job error "$ERROR"; return 1; }
-	case "$action" in apply)
-		[ "$expected" = "$(config_revision)" ] || { job error config_changed; return 1; };;
-	esac
 	case "$action" in
 		validate)
 			check_config "$RUN/validation.json" || { job error "$ERROR" "$DETAILS"; return 1; }
 			job success check_passed "$DETAILS";;
-		apply)
-			start_service restart apply_failed || { job error "$ERROR" "$DETAILS"; return 1; }
-			job success 'config_applied';;
-		start|restart)
+		save)
+			content=$(cat "$RUN/validation.json"; printf '.')
+			content=${content%.}
+			save_config "$content" "$expected" || { job error "$ERROR" "$DETAILS"; return 1; }
+			job success "$SAVE_CODE";;
+		start)
 			start_service "$action" start_failed || { job error "$ERROR" "$DETAILS"; return 1; }
 			job success 'service_running';;
 		stop)
@@ -380,6 +430,7 @@ worker() {
 }
 
 worker_exit() {
+	[ -z "${SAVE_CANDIDATE:-}" ] || rm -f "$SAVE_CANDIDATE"
 	rm -f "$RUN/check.log" "$RUN/service.log" "$RUN/validation.json"
 	unlock
 }

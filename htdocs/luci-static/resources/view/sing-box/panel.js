@@ -56,7 +56,8 @@ const messages = {
   content_invalid: '配置内容必须是字符串',
   operation_busy: '另一项操作正在执行',
   config_save_failed: '无法保存配置文件',
-  config_saved: '配置文件已保存；服务未重启',
+  config_saved: '配置文件已保存；服务保持停止',
+  config_unchanged: '配置没有变化；服务未重启',
   config_changed: '配置文件已改变，请重新加载后再保存或应用',
   operation_queued: '操作已加入队列',
   enabled_invalid: 'enabled 必须是布尔值',
@@ -79,10 +80,9 @@ const messages = {
 
 const actions = {
   validate: '校验',
-  apply: '应用',
+  save: '保存配置',
   start: '启动',
   stop: '停止',
-  restart: '重启',
   cache_reset: '清理缓存',
   cache_reset_start: '清理缓存并启动',
 };
@@ -130,6 +130,7 @@ return view.extend({
       node.disabled = busy || (write && !this.writable) || (config && !this.loaded);
     });
     this.boot.disabled = busy || !this.writable;
+    this.running.disabled = busy || !this.writable;
     this.editor.readOnly = busy || !this.writable || !this.loaded;
   },
 
@@ -261,15 +262,12 @@ return view.extend({
     ]);
   },
 
-  async save(apply) {
+  async save() {
     const content = this.content();
     const result = checked(await api.save(content, this.revision));
-    this.savedText = content;
-    this.revision = result.revision;
-    this.status.revision = result.revision;
-    this.updateDirty();
-    if (apply) await this.queue('apply', result.revision);
-    else this.notify(message(result));
+    this.pendingSave = { id: result.id, content };
+    this.status.busy = true;
+    this.lastJob = null;
   },
 
   updateStatus(status) {
@@ -277,7 +275,22 @@ return view.extend({
     this.runtime.textContent = status.running ? '运行中 · PID ' + status.pid : '已停止';
     this.version.textContent = status.version || '未检测到内核';
     this.path.textContent = status.config || '未配置';
-    if (!this.localBusy) this.boot.checked = !!status.autostart;
+    if (!this.localBusy) {
+      this.boot.checked = !!status.autostart;
+      this.running.checked = !!status.running;
+    }
+    if (this.pendingSave && status.job) {
+      try {
+        const job = JSON.parse(status.job);
+        if (job.id === this.pendingSave.id && (job.state === 'success' || job.state === 'error')) {
+          if (job.revision) {
+            this.savedText = this.pendingSave.content;
+            this.revision = job.revision;
+          }
+          this.pendingSave = null;
+        }
+      } catch { /* Malformed job data is reported below. */ }
+    }
     this.problem.textContent = status.error_code ? message({ code: status.error_code }) : status.error || '';
     this.problem.hidden = !this.problem.textContent;
     this.progress.textContent = status.busy ? '后台操作进行中，请稍候…' : '';
@@ -369,11 +382,19 @@ return view.extend({
         this.notify(messages.autostart_updated);
       }, true);
     });
+    const runningCheckbox = new ui.Checkbox('0', { id: 'sing-box-running' }).render();
+    this.running = runningCheckbox.querySelector('input[type="checkbox"]');
+    this.running.setAttribute('aria-label', '运行服务');
+    this.running.addEventListener('change', () => {
+      const enabled = this.running.checked;
+      this.run(() => this.queue(enabled ? 'start' : 'stop'), true);
+    });
     const overview = E('div', { 'data-tab': 'overview', 'data-tab-title': '服务' }, [
       field('运行状态', this.runtime),
+      field('开机启动', checkbox),
+      field('运行服务', runningCheckbox),
       field('内核版本', this.version),
       field('配置文件', this.path),
-      field('开机启动', checkbox),
       field(
         '运行面板',
         E(
@@ -385,14 +406,6 @@ return view.extend({
           },
           '独立打开',
         ),
-      ),
-      field(
-        '服务操作',
-        E('div', { class: 'sing-box-actions' }, [
-          this.button('启动', () => this.queue('start'), 'apply'),
-          this.button('停止', () => this.queue('stop'), 'negative'),
-          this.button('重启', () => this.queue('restart')),
-        ]),
       ),
       field('维护缓存', [
         this.button('清理缓存', () => this.showCacheReset(), 'negative'),
@@ -411,6 +424,7 @@ return view.extend({
       ),
       this.dirty,
       this.editor,
+      E('p', { class: 'cbi-section-descr' }, '保存前校验；运行中的服务会重启，已停止的服务保持停止。'),
       E('div', { class: 'cbi-page-actions sing-box-actions' }, [
         this.button(
           '重载配置',
@@ -443,8 +457,7 @@ return view.extend({
           true,
           true,
         ),
-        this.button('保存', () => this.save(false), 'action', true, true),
-        this.button('保存并应用', () => this.save(true), 'apply', true, true),
+        this.button('保存', () => this.save(), 'apply', true, true),
       ]),
     ]);
     this.logHint = E('div', { class: 'cbi-section-descr', role: 'status' });
